@@ -1,0 +1,788 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>IRON LOG</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Bebas+Neue&display=swap" rel="stylesheet" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { background: #0d0d0d; min-height: 100vh; }
+    body { font-family: 'DM Mono', 'Courier New', monospace; color: #e8e0d5; }
+    ::placeholder { color: #3a3530; }
+    input, textarea, select, button { font-family: inherit; outline: none; }
+    input:focus, textarea:focus { border-color: #e8c84a !important; }
+    input[type="date"] { color-scheme: dark; }
+    ::-webkit-scrollbar { width: 3px; height: 3px; }
+    ::-webkit-scrollbar-thumb { background: #2a2820; border-radius: 2px; }
+    .nav-btn { cursor: pointer; transition: all .15s; padding-bottom: 6px; text-transform: uppercase; letter-spacing: 2px; font-size: 11px; background: none; border: none; color: #5a5550; }
+    .nav-btn:hover { color: #e8c84a; }
+    .nav-btn.active { color: #e8c84a; border-bottom: 1px solid #e8c84a; }
+    .add-btn { cursor: pointer; transition: all .18s; }
+    .add-btn:hover { background: #d4b83e !important; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(232,200,74,.2); }
+    .entry-card { transition: background .15s; }
+    .entry-card:hover { background: #161410 !important; }
+    .del-btn { opacity: 0; transition: opacity .15s; cursor: pointer; }
+    .entry-card:hover .del-btn { opacity: 1; }
+    .edit-btn { cursor: pointer; opacity: 0; transition: opacity .15s; }
+    .entry-card:hover .edit-btn { opacity: .5; }
+    .edit-btn:hover { opacity: 1 !important; }
+    .dd-item { transition: all .1s; }
+    .dd-item:hover { background: #1e1c18 !important; color: #e8c84a !important; }
+    .stat-card { background: #111; border: 1px solid #1e1c18; border-radius: 8px; padding: 18px 20px; }
+    .top-stat { background: #111; border: 1px solid #1a1815; border-radius: 8px; padding: 20px; }
+    .phase-pill { border-radius: 6px; padding: 14px 16px; cursor: pointer; transition: all .15s; }
+    .phase-pill:hover { border-color: #5a5540 !important; background: #141210 !important; }
+    .date-group-row { cursor: pointer; transition: background .15s; }
+    .date-group-row:hover { background: #161410 !important; }
+    .csv-btn { background: transparent; border: 1px solid #2a2820; color: #5a5550; padding: 5px 12px; border-radius: 4px; font-size: 10px; letter-spacing: 2px; cursor: pointer; transition: all .15s; }
+    .csv-btn:hover { border-color: #e8c84a; color: #e8c84a; }
+    .stall-btn { font-size: 9px; color: #3a3530; background: transparent; border: 1px solid #2a2820; border-radius: 3px; padding: 2px 7px; cursor: pointer; letter-spacing: 1px; }
+    .stall-btn:hover { border-color: #6a3030 !important; color: #8a5050 !important; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    // ── Storage: persists to localStorage ────────────────────────────────────
+    const storage = {
+      get: (key) => {
+        try { const v = localStorage.getItem(key); return v ? { value: v } : null; } catch { return null; }
+      },
+      set: (key, val) => {
+        try { localStorage.setItem(key, val); } catch {}
+      }
+    };
+
+    // ── Constants ─────────────────────────────────────────────────────────────
+    const EXERCISE_LIST = [
+      { group:"Chest",     exercises:["Bench Press","Incline Bench Press","Close Grip Bench Press","Dumbbell Flys"] },
+      { group:"Legs",      exercises:["Barbell Squat","Hack Squat","Deadlift"] },
+      { group:"Shoulders", exercises:["Barbell Shoulder Press","Dumbbell Shoulder Press"] },
+      { group:"Back",      exercises:["Barbell Rows","Lat Pulldown"] },
+    ];
+
+    const ENTRIES_KEY     = "ironlog-entries-v3";
+    const PROGRESSION_KEY = "ironlog-progression-v1";
+    const PHASE_KEY       = "ironlog-phase-v1";
+
+    const DEFAULT_PROGRESSION = [
+      { id:"squat",    label:"Barbell Squat", increment:2.5  },
+      { id:"bench",    label:"Bench Press",   increment:1.25 },
+      { id:"deadlift", label:"Deadlift",      increment:2.5  },
+    ];
+
+    const PHASES = [
+      { id:1, name:"DELOAD",   days:2, sets:5, reps:5, description:"2 days/week · 5×5 · Build the base"    },
+      { id:2, name:"STRENGTH", days:3, sets:5, reps:5, description:"3 days/week · 5×5 · Drive progression" },
+      { id:3, name:"PEAK",     days:2, sets:5, reps:6, description:"2 days/week · 5×6 · Peak output"       },
+    ];
+
+    const DEFAULT_PHASE_STATE = {
+      currentPhase: 1, phaseStartDate: null, transitions: [],
+      stallCounts: { squat:0, bench:0, deadlift:0 },
+    };
+
+    const EMPTY_FORM = { exercise:"", sets:"", reps:"", weight:"", notes:"", pr:false };
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+    function toDateStr(d = new Date()) { return d.toISOString().slice(0,10); }
+    function fmtDate(s) {
+      if (!s) return "";
+      return new Date(s+"T00:00:00").toLocaleDateString("en-AU",{day:"numeric",month:"short",year:"numeric"});
+    }
+    function fmtDateShort(s) {
+      if (!s) return "";
+      return new Date(s+"T00:00:00").toLocaleDateString("en-AU",{day:"numeric",month:"short"});
+    }
+    function fmtDayOfWeek(s) {
+      if (!s) return "";
+      return new Date(s+"T00:00:00").toLocaleDateString("en-AU",{weekday:"long"});
+    }
+    function weekStart(s) {
+      const d = new Date(s+"T00:00:00"), day = d.getDay();
+      d.setDate(d.getDate() - day + (day===0 ? -6 : 1));
+      return toDateStr(d);
+    }
+    function weekEnd(ws) {
+      const d = new Date(ws+"T00:00:00"); d.setDate(d.getDate()+6); return toDateStr(d);
+    }
+    function weeksBetween(a, b) {
+      return Math.floor((new Date(b+"T00:00:00") - new Date(a+"T00:00:00")) / (7*24*60*60*1000));
+    }
+    function pct(a, b) { return (!b||b===0) ? null : Math.round(((a-b)/b)*100); }
+
+    function DeltaBadge({ val, unit="" }) {
+      if (val===null||val===undefined) return null;
+      const up=val>0, zero=val===0;
+      const color=zero?"#5a5550":up?"#4a9a4a":"#9a4a4a";
+      const bg=zero?"#1a1815":up?"#0d1f0d":"#1f0d0d";
+      const bdr=zero?"#2a2820":up?"#1a3a1a":"#3a1a1a";
+      return <span style={{fontSize:10,background:bg,color,border:`1px solid ${bdr}`,borderRadius:3,padding:"2px 7px",letterSpacing:1,marginLeft:6}}>{up?"+":""}{val}{unit}</span>;
+    }
+
+    // ── Main App ──────────────────────────────────────────────────────────────
+    function App() {
+      const [entries,          setEntries]          = useState([]);
+      const [view,             setView]             = useState("log");
+      const [form,             setForm]             = useState(EMPTY_FORM);
+      const [formDate,         setFormDate]         = useState(toDateStr());
+      const [editingId,        setEditingId]        = useState(null);
+      const [loaded,           setLoaded]           = useState(false);
+      const [flash,            setFlash]            = useState(null);
+      const [showDropdown,     setShowDropdown]     = useState(false);
+      const [exerciseFilter,   setExerciseFilter]   = useState("");
+      const [customMode,       setCustomMode]       = useState(false);
+      const [expandedDate,     setExpandedDate]     = useState(null);
+      const [csvModal,         setCsvModal]         = useState(false);
+      const [csvContent,       setCsvContent]       = useState("");
+      const [progConfig,       setProgConfig]       = useState(DEFAULT_PROGRESSION);
+      const [progStartWeights, setProgStartWeights] = useState({});
+      const [phaseState,       setPhaseState]       = useState(DEFAULT_PHASE_STATE);
+
+      const dropdownRef = useRef(null);
+      const inputRef    = useRef(null);
+      const customRef   = useRef(null);
+
+      useEffect(() => {
+        function h(e) { if (dropdownRef.current && !dropdownRef.current.contains(e.target)) setShowDropdown(false); }
+        document.addEventListener("mousedown", h);
+        return () => document.removeEventListener("mousedown", h);
+      }, []);
+
+      useEffect(() => {
+        const r1 = storage.get(ENTRIES_KEY);
+        if (r1) try { setEntries(JSON.parse(r1.value)); } catch {}
+        const r2 = storage.get(PROGRESSION_KEY);
+        if (r2) try { const d=JSON.parse(r2.value); if(d.startWeights) setProgStartWeights(d.startWeights); if(d.config) setProgConfig(d.config); } catch {}
+        const r3 = storage.get(PHASE_KEY);
+        if (r3) try { setPhaseState(s=>({...DEFAULT_PHASE_STATE,...JSON.parse(r3.value)})); } catch {}
+        setLoaded(true);
+      }, []);
+
+      function saveEntries(d)    { storage.set(ENTRIES_KEY,     JSON.stringify(d)); }
+      function saveProg(sw, cfg) { storage.set(PROGRESSION_KEY, JSON.stringify({startWeights:sw,config:cfg})); }
+      function savePhase(ps)     { storage.set(PHASE_KEY,       JSON.stringify(ps)); }
+
+      function showFlash(msg, type="success") { setFlash({msg,type}); setTimeout(()=>setFlash(null),2200); }
+
+      function switchPhase(toId, reason="manual") {
+        const now=toDateStr();
+        const ps={...phaseState,currentPhase:toId,phaseStartDate:now,
+          transitions:[...phaseState.transitions,{from:phaseState.currentPhase,to:toId,date:now,reason}],
+          stallCounts:{squat:0,bench:0,deadlift:0}};
+        setPhaseState(ps); savePhase(ps);
+        showFlash(`Switched to Phase ${toId}: ${PHASES[toId-1].name}`);
+      }
+      function bumpStall(liftId) {
+        const ps={...phaseState,stallCounts:{...phaseState.stallCounts,[liftId]:(phaseState.stallCounts[liftId]||0)+1}};
+        setPhaseState(ps); savePhase(ps);
+      }
+
+      function getLastData(name) {
+        for (let i=entries.length-1;i>=0;i--) {
+          const e=entries[i];
+          if (e.exercise.toLowerCase()===name.toLowerCase()&&!(editingId&&e.id===editingId))
+            return {sets:e.sets,reps:e.reps,weight:e.weight};
+        }
+        return null;
+      }
+      function selectExercise(name) {
+        const last=getLastData(name);
+        setForm(f=>({...f,exercise:name,sets:last?.sets??f.sets,reps:last?.reps??f.reps,weight:last?.weight??f.weight}));
+        setShowDropdown(false);
+      }
+      function addOrUpdateEntry() {
+        if (!form.exercise.trim()) return;
+        const id=editingId||Date.now().toString();
+        const entry={id,date:formDate,exercise:form.exercise.trim(),sets:form.sets,reps:form.reps,
+          weight:form.weight,notes:form.notes,pr:form.pr,
+          timestamp:editingId?(entries.find(e=>e.id===editingId)?.timestamp||new Date().toISOString()):new Date().toISOString()};
+        const ne=editingId?entries.map(e=>e.id===editingId?entry:e):[...entries,entry];
+        setEntries(ne); saveEntries(ne);
+        setForm(EMPTY_FORM); setFormDate(toDateStr()); setEditingId(null); setCustomMode(false);
+        showFlash(editingId?"Exercise updated!":"Exercise logged!");
+      }
+      function deleteEntry(id) {
+        const ne=entries.filter(e=>e.id!==id); setEntries(ne); saveEntries(ne); showFlash("Removed.","error");
+      }
+      function startEdit(entry) {
+        setForm({exercise:entry.exercise,sets:entry.sets,reps:entry.reps,weight:entry.weight,notes:entry.notes,pr:entry.pr});
+        setFormDate(entry.date); setEditingId(entry.id);
+        window.scrollTo({top:0,behavior:"smooth"});
+      }
+
+      function exportCSV() {
+        if (!entries.length) { showFlash("Nothing to export yet.","error"); return; }
+        const header=["Date","Day","Exercise","Sets","Reps","Weight (kg)","PR","Notes"];
+        const rows=[...entries].sort((a,b)=>a.date.localeCompare(b.date)||a.timestamp.localeCompare(b.timestamp))
+          .map(e=>[e.date,fmtDayOfWeek(e.date),`"${e.exercise.replace(/"/g,'""')}"`,e.sets,e.reps,e.weight,e.pr?"Yes":"No",`"${(e.notes||"").replace(/"/g,'""')}"`]);
+        setCsvContent([header,...rows].map(r=>r.join(",")).join("\n"));
+        setCsvModal(true);
+      }
+
+      function getWeekStats(ws) {
+        const we=weekEnd(ws), wE=entries.filter(e=>e.date>=ws&&e.date<=we);
+        let sets=0,vol=0,prs=0; const days=new Set();
+        wE.forEach(e=>{days.add(e.date);const s=parseInt(e.sets)||0,r=parseInt(e.reps)||0,w=parseFloat(e.weight)||0;sets+=s;vol+=s*r*w;if(e.pr)prs++;});
+        return {totalExercises:wE.length,totalSets:sets,prs,activeDays:days.size,totalVolume:Math.round(vol)};
+      }
+      function getExerciseHistory(name) {
+        return entries.filter(e=>e.exercise.toLowerCase()===name.toLowerCase())
+          .sort((a,b)=>a.date.localeCompare(b.date))
+          .map(e=>({date:e.date,weight:parseFloat(e.weight)||0,sets:e.sets,reps:e.reps,pr:e.pr}));
+      }
+      function getExerciseWeekMax(name,ws) {
+        const we=weekEnd(ws),ws2=entries.filter(e=>e.exercise.toLowerCase()===name.toLowerCase()&&e.date>=ws&&e.date<=we);
+        if (!ws2.length) return null;
+        const weights=ws2.map(e=>parseFloat(e.weight)||0).filter(w=>w>0);
+        return weights.length?Math.max(...weights):null;
+      }
+
+      function getProgressionData() {
+        const nowStr=toDateStr(), thisWk=weekStart(nowStr);
+        return progConfig.map(lift=>{
+          const liftName=lift.label.toLowerCase(), weekMap={};
+          entries.forEach(e=>{
+            if (e.exercise.toLowerCase()!==liftName) return;
+            const wk=weekStart(e.date),w=parseFloat(e.weight)||0;
+            if (!weekMap[wk]||w>weekMap[wk]) weekMap[wk]=w;
+          });
+          const weeksSorted=Object.keys(weekMap).sort();
+          const startData=progStartWeights[lift.id];
+          let startWeight=startData?.weight||null,startWeekKey=startData?.weekStart||null;
+          if (!startWeight&&weeksSorted.length>0){startWeight=weekMap[weeksSorted[0]];startWeekKey=weeksSorted[0];}
+          let prescribedWeight=null;
+          if (startWeight&&startWeekKey){const elapsed=weeksBetween(startWeekKey,thisWk);prescribedWeight=+(startWeight+elapsed*lift.increment).toFixed(2);}
+          const nextWeight=prescribedWeight!==null?+(prescribedWeight+lift.increment).toFixed(2):null;
+          const recent=weeksSorted.slice(-3),recentW=recent.map(wk=>weekMap[wk]);
+          const stalled=recentW.length>=2&&recentW.every(w=>w===recentW[0]);
+          const stalledWeeks=stalled?recentW.length:0;
+          const lastLoggedWeek=weeksSorted.length>0?weeksSorted[weeksSorted.length-1]:null;
+          return {...lift,prescribedWeight,nextWeight,thisWeekActual:weekMap[thisWk]||null,
+            lastLoggedWeek,lastLoggedWeight:lastLoggedWeek?weekMap[lastLoggedWeek]:null,
+            stalled,stalledWeeks,history:weeksSorted.slice(-8).map(wk=>({wk,weight:weekMap[wk]})),
+            hasData:weeksSorted.length>0||startWeight!==null,startWeight,startWeekKey};
+        });
+      }
+
+      // ── Derived values
+      const todayStr         = toDateStr();
+      const thisWeekStartStr = weekStart(todayStr);
+      const thisWeekEndStr   = weekEnd(thisWeekStartStr);
+      const todayEntries     = entries.filter(e=>e.date===formDate).sort((a,b)=>a.timestamp.localeCompare(b.timestamp));
+      const byDate           = (() => { const m={}; entries.forEach(e=>{if(!m[e.date])m[e.date]=[];m[e.date].push(e);}); return Object.keys(m).sort().reverse().map(d=>({date:d,entries:m[d]})); })();
+      const loggedExercises  = [...new Set(entries.map(e=>e.exercise))];
+      const allWeekStarts    = [...new Set(entries.map(e=>weekStart(e.date)))].sort();
+      const thisWeekIdx      = allWeekStarts.indexOf(thisWeekStartStr);
+      const lastWeekStartStr = thisWeekIdx>0?allWeekStarts[thisWeekIdx-1]:null;
+      const curStats         = getWeekStats(thisWeekStartStr);
+      const prevStats        = lastWeekStartStr?getWeekStats(lastWeekStartStr):null;
+      const progressionData  = getProgressionData();
+      const weeksInPhase     = phaseState.phaseStartDate?weeksBetween(phaseState.phaseStartDate,todayStr):0;
+      const currentPhaseObj  = PHASES.find(p=>p.id===phaseState.currentPhase)||PHASES[0];
+      const nextPhaseObj     = PHASES.find(p=>p.id===phaseState.currentPhase+1)||null;
+      const allLiftsStalled  = progressionData.every(l=>l.stalled||(phaseState.stallCounts[l.id]||0)>=3);
+
+      if (!loaded) return <div style={{background:"#0a0a0a",minHeight:"100vh",color:"#e8c84a",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Bebas Neue',sans-serif",fontSize:24,letterSpacing:4}}>LOADING...</div>;
+
+      return (
+        <div style={{fontFamily:"'DM Mono','Courier New',monospace",background:"#0d0d0d",minHeight:"100vh",color:"#e8e0d5",paddingBottom:80}}>
+
+          {/* Flash */}
+          {flash && <div style={{position:"fixed",top:20,left:"50%",transform:"translateX(-50%)",background:flash.type==="error"?"#2a1010":"#0f2010",border:`1px solid ${flash.type==="error"?"#8b2222":"#2a7a2a"}`,color:flash.type==="error"?"#e87070":"#70e870",padding:"10px 24px",borderRadius:4,fontSize:12,zIndex:999,letterSpacing:1,pointerEvents:"none",whiteSpace:"nowrap"}}>{flash.msg}</div>}
+
+          {/* Header */}
+          <div style={{borderBottom:"1px solid #1a1815",padding:"20px 24px 16px"}}>
+            <div style={{maxWidth:800,margin:"0 auto",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
+              <div>
+                <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:40,letterSpacing:4,color:"#e8c84a",lineHeight:1}}>IRON LOG</div>
+                <div style={{fontSize:10,color:"#3a3530",letterSpacing:3,marginTop:5}}>WORKOUT TRACKER · KG</div>
+              </div>
+              <div style={{display:"flex",gap:20,alignItems:"center",flexWrap:"wrap"}}>
+                {["log","history","dashboard","progression"].map(v=>(
+                  <button key={v} className={`nav-btn${view===v?" active":""}`} onClick={()=>setView(v)}>{v}</button>
+                ))}
+                <button className="csv-btn" onClick={exportCSV}>↓ CSV</button>
+              </div>
+            </div>
+          </div>
+
+          {/* Content */}
+          <div style={{maxWidth:800,margin:"0 auto",padding:"0 24px"}}>
+
+            {/* ════ LOG ════ */}
+            {view==="log" && <>
+              <div style={{marginTop:28,marginBottom:22}}>
+                <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:30,letterSpacing:2,color:"#fff"}}>LOG EXERCISE</div>
+              </div>
+
+              <div style={{background:"#111",border:"1px solid #1a1815",borderRadius:8,padding:22,marginBottom:28}}>
+                {/* Date */}
+                <div style={{marginBottom:20}}>
+                  <div style={{fontSize:9,letterSpacing:3,color:"#3a3530",marginBottom:8}}>DATE</div>
+                  <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+                    <input type="date" value={formDate} max={todayStr} onChange={e=>setFormDate(e.target.value)}
+                      style={{background:"transparent",border:"1px solid #2a2820",borderRadius:4,color:"#e8e0d5",fontSize:14,padding:"8px 12px",cursor:"pointer"}}/>
+                    <span style={{fontSize:12,color:"#5a5550"}}>
+                      {fmtDayOfWeek(formDate)}
+                      {formDate===todayStr && <span style={{marginLeft:8,fontSize:10,color:"#e8c84a",letterSpacing:1}}>TODAY</span>}
+                    </span>
+                    {formDate!==todayStr && <span onClick={()=>setFormDate(todayStr)} style={{fontSize:10,color:"#4a4540",cursor:"pointer",textDecoration:"underline"}}>reset to today</span>}
+                  </div>
+                </div>
+                <div style={{borderTop:"1px solid #1a1815",marginBottom:20}}/>
+                <div style={{fontSize:10,letterSpacing:3,color:"#3a3530",marginBottom:18}}>{editingId?"EDIT EXERCISE":"EXERCISE"}</div>
+
+                {/* Exercise input mode toggle */}
+                <div style={{marginBottom:18}}>
+                  <div style={{display:"flex",gap:10,marginBottom:10}}>
+                    {[["FROM LIST",false],["CUSTOM",true]].map(([label,cm])=>(
+                      <button key={label} onClick={()=>{setCustomMode(cm);setShowDropdown(false);if(cm)setTimeout(()=>customRef.current?.focus(),50);}}
+                        style={{fontSize:10,letterSpacing:2,padding:"5px 14px",borderRadius:4,cursor:"pointer",border:`1px solid ${customMode===cm?"#e8c84a":"#2a2820"}`,background:customMode===cm?"#e8c84a18":"transparent",color:customMode===cm?"#e8c84a":"#5a5550"}}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  {customMode ? (
+                    <input ref={customRef} value={form.exercise} onChange={e=>setForm(f=>({...f,exercise:e.target.value}))} placeholder="Type exercise name..."
+                      style={{width:"100%",background:"transparent",border:"1px solid #2a2820",borderRadius:4,color:"#e8e0d5",fontSize:15,padding:"9px 12px"}}/>
+                  ) : (
+                    <div ref={dropdownRef} style={{position:"relative"}}>
+                      <div style={{display:"flex",alignItems:"center",border:"1px solid #2a2820",borderRadius:4}}>
+                        <input ref={inputRef} value={form.exercise}
+                          onChange={e=>{setForm(f=>({...f,exercise:e.target.value}));setExerciseFilter(e.target.value);setShowDropdown(true);}}
+                          onFocus={()=>{setExerciseFilter(form.exercise);setShowDropdown(true);}}
+                          onKeyDown={e=>{if(e.key==="Escape")setShowDropdown(false);}}
+                          placeholder="Select an exercise..."
+                          style={{flex:1,background:"transparent",border:"none",color:"#e8e0d5",fontSize:15,padding:"9px 12px"}}/>
+                        <span onClick={()=>{setShowDropdown(s=>!s);setExerciseFilter("");inputRef.current?.focus();}}
+                          style={{color:"#3a3530",cursor:"pointer",fontSize:14,padding:"0 12px",userSelect:"none"}}
+                          onMouseEnter={e=>e.target.style.color="#e8c84a"} onMouseLeave={e=>e.target.style.color="#3a3530"}>▾</span>
+                      </div>
+                      {showDropdown && (() => {
+                        const q=exerciseFilter.toLowerCase();
+                        const filtered=EXERCISE_LIST.map(g=>({...g,exercises:g.exercises.filter(ex=>ex.toLowerCase().includes(q))})).filter(g=>g.exercises.length>0);
+                        if (!filtered.length) return null;
+                        return (
+                          <div style={{position:"absolute",top:"calc(100% + 4px)",left:0,right:0,zIndex:100,background:"#161410",border:"1px solid #2a2820",borderRadius:6,maxHeight:260,overflowY:"auto",boxShadow:"0 12px 32px rgba(0,0,0,.8)"}}>
+                            {filtered.map(group=>(
+                              <div key={group.group}>
+                                <div style={{padding:"10px 16px 4px",fontSize:9,letterSpacing:3,color:"#3a3530"}}>{group.group}</div>
+                                {group.exercises.map(ex=>{
+                                  const last=getLastData(ex);
+                                  return (
+                                    <div key={ex} className="dd-item" onMouseDown={e=>{e.preventDefault();selectExercise(ex);}}
+                                      style={{padding:"10px 16px",fontSize:13,color:"#b8b0a5",cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                                      <span>{ex}</span>
+                                      {last?.weight && <span style={{fontSize:10,color:"#4a4540",letterSpacing:1}}>last {last.weight} kg</span>}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  )}
+                </div>
+
+                {/* Sets / Reps / Weight */}
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14,marginBottom:16}}>
+                  {[{label:"SETS",key:"sets",ph:"4"},{label:"REPS",key:"reps",ph:"8"},{label:"WEIGHT (KG)",key:"weight",ph:"91"}].map(({label,key,ph})=>(
+                    <div key={key}>
+                      <div style={{fontSize:9,letterSpacing:3,color:"#3a3530",marginBottom:8}}>{label}</div>
+                      <input value={form[key]} onChange={e=>setForm(f=>({...f,[key]:e.target.value}))} placeholder={ph}
+                        style={{width:"100%",background:"transparent",border:"1px solid #2a2820",borderRadius:4,color:"#e8e0d5",fontSize:15,padding:"8px 12px"}}/>
+                    </div>
+                  ))}
+                </div>
+
+                <textarea value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} placeholder="Notes — how it felt, form cues..." rows={2}
+                  style={{width:"100%",background:"transparent",border:"1px solid #2a2820",borderRadius:4,color:"#e8e0d5",fontSize:12,padding:"9px 12px",resize:"vertical",marginBottom:18}}/>
+
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
+                  <div onClick={()=>setForm(f=>({...f,pr:!f.pr}))}
+                    style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer",fontSize:11,letterSpacing:1,color:form.pr?"#e8c84a":"#5a5550",userSelect:"none"}}>
+                    <div style={{width:36,height:20,borderRadius:10,border:`1px solid ${form.pr?"#e8c84a":"#2a2820"}`,background:form.pr?"#e8c84a22":"transparent",position:"relative",transition:"all .2s"}}>
+                      <div style={{width:12,height:12,borderRadius:"50%",background:form.pr?"#e8c84a":"#3a3530",position:"absolute",top:3,left:form.pr?19:3,transition:"all .2s"}}/>
+                    </div>
+                    🏆 PERSONAL RECORD
+                  </div>
+                  <div style={{display:"flex",gap:10}}>
+                    {editingId && <button onClick={()=>{setEditingId(null);setForm(EMPTY_FORM);setFormDate(toDateStr());setCustomMode(false);}} style={{background:"transparent",border:"1px solid #2a2820",color:"#5a5550",padding:"9px 18px",borderRadius:4,fontSize:11,letterSpacing:1,cursor:"pointer"}}>CANCEL</button>}
+                    <button className="add-btn" onClick={addOrUpdateEntry} style={{background:"#e8c84a",border:"none",color:"#0d0d0d",padding:"10px 28px",borderRadius:4,fontSize:11,letterSpacing:2,fontWeight:700,cursor:"pointer"}}>
+                      {editingId?"UPDATE":"+ LOG"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {todayEntries.length>0 && (
+                <div>
+                  <div style={{fontSize:10,letterSpacing:3,color:"#3a3530",marginBottom:14}}>{formDate===todayStr?"TODAY'S LOG":`LOG FOR ${fmtDate(formDate).toUpperCase()}`}</div>
+                  <div style={{background:"#111",border:"1px solid #1a1815",borderRadius:8}}>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 70px 70px 90px 52px 70px",padding:"10px 18px",fontSize:9,letterSpacing:3,color:"#3a3530",borderBottom:"1px solid #1a1815"}}>
+                      <span>EXERCISE</span><span style={{textAlign:"center"}}>SETS</span><span style={{textAlign:"center"}}>REPS</span><span style={{textAlign:"center"}}>WEIGHT</span><span style={{textAlign:"center"}}>PR</span><span/>
+                    </div>
+                    {todayEntries.map((entry,idx)=>(
+                      <div key={entry.id} className="entry-card" style={{display:"grid",gridTemplateColumns:"1fr 70px 70px 90px 52px 70px",padding:"13px 18px",borderBottom:idx<todayEntries.length-1?"1px solid #141210":"none",alignItems:"center",background:"#111"}}>
+                        <div>
+                          <div style={{fontSize:13,color:"#fff"}}>{entry.exercise}</div>
+                          {entry.notes && <div style={{fontSize:11,color:"#5a5550",fontStyle:"italic",marginTop:3}}>"{entry.notes}"</div>}
+                        </div>
+                        <span style={{textAlign:"center",fontSize:15,color:"#e8c84a"}}>{entry.sets||"—"}</span>
+                        <span style={{textAlign:"center",fontSize:15,color:"#e8c84a"}}>{entry.reps||"—"}</span>
+                        <span style={{textAlign:"center",fontSize:15,color:"#e8c84a"}}>{entry.weight?`${entry.weight} kg`:"—"}</span>
+                        <span style={{textAlign:"center",fontSize:14}}>{entry.pr?"🏆":<span style={{color:"#2a2820"}}>—</span>}</span>
+                        <div style={{display:"flex",gap:10,justifyContent:"center",alignItems:"center"}}>
+                          <span className="edit-btn" onClick={()=>startEdit(entry)} style={{fontSize:10,color:"#8a8075",letterSpacing:1}}>EDIT</span>
+                          <span className="del-btn" onClick={()=>deleteEntry(entry.id)} style={{fontSize:20,color:"#6a2a2a",lineHeight:1}}>×</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>}
+
+            {/* ════ HISTORY ════ */}
+            {view==="history" && <>
+              <div style={{marginTop:28,marginBottom:22,fontFamily:"'Bebas Neue',sans-serif",fontSize:30,letterSpacing:2,color:"#fff"}}>WORKOUT HISTORY</div>
+              {byDate.length===0
+                ? <div style={{textAlign:"center",color:"#2a2820",fontSize:12,letterSpacing:3,padding:"48px 0"}}>NO HISTORY YET</div>
+                : byDate.map(({date,entries:de})=>{
+                    const isExp=expandedDate===date;
+                    const vol=de.reduce((acc,e)=>acc+(parseInt(e.sets)||0)*(parseInt(e.reps)||0)*(parseFloat(e.weight)||0),0);
+                    const hasPR=de.some(e=>e.pr);
+                    return (
+                      <div key={date} style={{marginBottom:10}}>
+                        <div className="date-group-row" onClick={()=>setExpandedDate(isExp?null:date)}
+                          style={{background:"#111",border:"1px solid #1a1815",borderRadius:isExp?"8px 8px 0 0":8,padding:"14px 20px",display:"grid",gridTemplateColumns:"1fr auto auto auto auto",gap:16,alignItems:"center"}}>
+                          <div>
+                            <div style={{fontSize:13,color:"#e8e0d5"}}>{fmtDayOfWeek(date)}, {fmtDate(date)}{date===todayStr&&<span style={{marginLeft:10,fontSize:9,color:"#e8c84a",letterSpacing:2}}>TODAY</span>}</div>
+                            <div style={{fontSize:11,color:"#3a3530",marginTop:3}}>{de.length} exercise{de.length!==1?"s":""}</div>
+                          </div>
+                          {hasPR&&<span>🏆</span>}
+                          {vol>0&&<span style={{fontSize:11,color:"#5a5550"}}>{Math.round(vol).toLocaleString()} kg vol</span>}
+                          <span style={{fontSize:11,color:"#4a4540"}}>{de.reduce((a,e)=>(parseInt(e.sets)||0)+a,0)} sets</span>
+                          <span style={{fontSize:14,color:"#3a3530"}}>{isExp?"▴":"▾"}</span>
+                        </div>
+                        {isExp && (
+                          <div style={{background:"#0e0e0c",border:"1px solid #1a1815",borderTop:"none",borderRadius:"0 0 8px 8px",padding:18}}>
+                            <div style={{display:"grid",gridTemplateColumns:"1fr 70px 70px 90px 50px",padding:"4px 4px 10px",fontSize:9,letterSpacing:3,color:"#2a2820",borderBottom:"1px solid #161410",marginBottom:4}}>
+                              <span>EXERCISE</span><span style={{textAlign:"center"}}>SETS</span><span style={{textAlign:"center"}}>REPS</span><span style={{textAlign:"center"}}>WEIGHT</span><span style={{textAlign:"center"}}>PR</span>
+                            </div>
+                            {de.map((entry,idx,arr)=>(
+                              <div key={entry.id} style={{display:"grid",gridTemplateColumns:"1fr 70px 70px 90px 50px",padding:"10px 4px",borderBottom:idx<arr.length-1?"1px solid #111":"none",alignItems:"center"}}>
+                                <span style={{fontSize:13,color:"#c8c0b5"}}>{entry.exercise}</span>
+                                <span style={{textAlign:"center",fontSize:13,color:"#7a7570"}}>{entry.sets||"—"}</span>
+                                <span style={{textAlign:"center",fontSize:13,color:"#7a7570"}}>{entry.reps||"—"}</span>
+                                <span style={{textAlign:"center",fontSize:13,color:"#7a7570"}}>{entry.weight?`${entry.weight} kg`:"—"}</span>
+                                <span style={{textAlign:"center"}}>{entry.pr?"🏆":<span style={{color:"#2a2820"}}>—</span>}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+              }
+            </>}
+
+            {/* ════ DASHBOARD ════ */}
+            {view==="dashboard" && <>
+              <div style={{marginTop:28,marginBottom:6,fontFamily:"'Bebas Neue',sans-serif",fontSize:30,letterSpacing:2,color:"#fff"}}>DASHBOARD</div>
+              <div style={{fontSize:11,color:"#3a3530",marginBottom:24}}>{fmtDate(thisWeekStartStr)} — {fmtDate(thisWeekEndStr)}</div>
+              {entries.length===0
+                ? <div style={{textAlign:"center",color:"#2a2820",fontSize:12,letterSpacing:3,padding:"48px 0"}}>LOG WORKOUTS TO SEE YOUR STATS</div>
+                : <>
+                    <div style={{fontSize:10,letterSpacing:3,color:"#3a3530",marginBottom:14}}>THIS WEEK</div>
+                    <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:12,marginBottom:32}}>
+                      {[
+                        {label:"TOTAL VOLUME",val:curStats.totalVolume.toLocaleString(),unit:"kg",delta:prevStats?pct(curStats.totalVolume,prevStats.totalVolume):null,deltaUnit:"%",sub:prevStats?`prev ${prevStats.totalVolume.toLocaleString()} kg`:"no prior week"},
+                        {label:"TOTAL SETS",val:curStats.totalSets,unit:"sets",delta:prevStats?curStats.totalSets-prevStats.totalSets:null,deltaUnit:"",sub:prevStats?`prev ${prevStats.totalSets} sets`:"no prior week"},
+                        {label:"EXERCISES",val:curStats.totalExercises,unit:"logged",delta:prevStats?pct(curStats.totalExercises,prevStats.totalExercises):null,deltaUnit:"%",sub:prevStats?`prev ${prevStats.totalExercises}`:"no prior week"},
+                        {label:"DAYS ACTIVE",val:curStats.activeDays,unit:"/ 7",delta:prevStats?curStats.activeDays-prevStats.activeDays:null,deltaUnit:" days",sub:prevStats?`prev ${prevStats.activeDays} days`:"no prior week"},
+                      ].map(({label,val,unit,delta,deltaUnit,sub})=>(
+                        <div key={label} className="top-stat">
+                          <div style={{fontSize:9,letterSpacing:3,color:"#3a3530",marginBottom:10}}>{label}</div>
+                          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:32,color:"#e8c84a",letterSpacing:1,lineHeight:1,marginBottom:4}}>
+                            {val}<span style={{fontSize:14,color:"#5a5550"}}> {unit}</span>
+                          </div>
+                          {delta!==null&&<DeltaBadge val={delta} unit={deltaUnit}/>}
+                          <div style={{fontSize:10,color:"#3a3530",marginTop:5}}>{sub}</div>
+                        </div>
+                      ))}
+                    </div>
+                    {curStats.prs>0 && (
+                      <div style={{background:"#13100a",border:"1px solid #3a3010",borderRadius:8,padding:"14px 20px",marginBottom:32,display:"flex",alignItems:"center",gap:14}}>
+                        <span style={{fontSize:24}}>🏆</span>
+                        <div>
+                          <div style={{fontSize:12,color:"#e8c84a",letterSpacing:1}}>{curStats.prs} PERSONAL RECORD{curStats.prs!==1?"S":""} THIS WEEK</div>
+                          <div style={{fontSize:11,color:"#5a5040",marginTop:3}}>{entries.filter(e=>e.date>=thisWeekStartStr&&e.date<=thisWeekEndStr&&e.pr).map(e=>e.exercise).join(" · ")}</div>
+                        </div>
+                      </div>
+                    )}
+                    {loggedExercises.length>0 && (
+                      <div>
+                        <div style={{fontSize:10,letterSpacing:3,color:"#3a3530",marginBottom:14}}>EXERCISE PROGRESSION</div>
+                        <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:12}}>
+                          {loggedExercises.map(ex=>{
+                            const hist=getExerciseHistory(ex);
+                            if (!hist.length) return null;
+                            const latest=hist[hist.length-1],maxW=Math.max(...hist.map(h=>h.weight)),hasPR=hist.some(h=>h.pr);
+                            const thisW=getExerciseWeekMax(ex,thisWeekStartStr),lastW=lastWeekStartStr?getExerciseWeekMax(ex,lastWeekStartStr):null;
+                            const overload=thisW!==null&&lastW!==null?+(thisW-lastW).toFixed(1):null;
+                            const overloadPct=thisW&&lastW&&lastW>0?Math.round(((thisW-lastW)/lastW)*100):null;
+                            return (
+                              <div key={ex} className="stat-card">
+                                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
+                                  <div style={{fontSize:12,color:"#fff"}}>{ex}</div>
+                                  {hasPR&&<span style={{fontSize:9,background:"#e8c84a18",color:"#e8c84a",border:"1px solid #e8c84a33",borderRadius:3,padding:"2px 7px",letterSpacing:1}}>PR</span>}
+                                </div>
+                                <div style={{display:"flex",gap:18,marginBottom:14,flexWrap:"wrap"}}>
+                                  <div>
+                                    <div style={{fontSize:8,color:"#3a3530",letterSpacing:3,marginBottom:3}}>CURRENT</div>
+                                    <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:26,color:"#e8c84a",letterSpacing:1,lineHeight:1}}>{latest.weight||"—"}<span style={{fontSize:12,color:"#5a5550"}}> kg</span></div>
+                                    <div style={{fontSize:9,color:"#3a3530",marginTop:2}}>{fmtDateShort(latest.date)}</div>
+                                  </div>
+                                  <div>
+                                    <div style={{fontSize:8,color:"#3a3530",letterSpacing:3,marginBottom:3}}>BEST</div>
+                                    <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:26,color:"#7a7570",letterSpacing:1,lineHeight:1}}>{maxW||"—"}<span style={{fontSize:12,color:"#5a5550"}}> kg</span></div>
+                                  </div>
+                                  {overload!==null && (
+                                    <div>
+                                      <div style={{fontSize:8,color:"#3a3530",letterSpacing:3,marginBottom:3}}>OVERLOAD</div>
+                                      <div style={{display:"flex",alignItems:"baseline",gap:5}}>
+                                        <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:26,letterSpacing:1,lineHeight:1,color:overload>0?"#4a9a4a":overload<0?"#9a4a4a":"#5a5550"}}>
+                                          {overload>0?"+":""}{overload}<span style={{fontSize:12,color:"#5a5550"}}> kg</span>
+                                        </div>
+                                        {overloadPct!==null&&<span style={{fontSize:10,color:overload>0?"#4a9a4a":overload<0?"#9a4a4a":"#5a5550"}}>({overload>0?"+":""}{overloadPct}%)</span>}
+                                      </div>
+                                      <div style={{fontSize:9,color:"#3a3530",marginTop:2}}>vs last week · {lastW} kg</div>
+                                    </div>
+                                  )}
+                                </div>
+                                {hist.length>1 && (
+                                  <div style={{display:"flex",gap:3,alignItems:"flex-end",height:32,marginBottom:8}}>
+                                    {hist.slice(-10).map((h,i)=>{
+                                      const p=maxW>0?(h.weight/maxW)*100:0;
+                                      return <div key={i} title={`${fmtDateShort(h.date)} · ${h.weight} kg`} style={{flex:1,background:h.pr?"#e8c84a":"#252220",height:`${Math.max(p,10)}%`,borderRadius:"2px 2px 0 0",minWidth:6}}/>;
+                                    })}
+                                  </div>
+                                )}
+                                <div style={{fontSize:10,color:"#3a3530",letterSpacing:1}}>{hist.length} session{hist.length!==1?"s":""} · latest {latest.sets}×{latest.reps}</div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </>
+              }
+            </>}
+
+            {/* ════ PROGRESSION ════ */}
+            {view==="progression" && <>
+              <div style={{marginTop:28,marginBottom:20,fontFamily:"'Bebas Neue',sans-serif",fontSize:30,letterSpacing:2,color:"#fff"}}>PROGRESSIVE OVERLOAD</div>
+
+              {allLiftsStalled && (
+                <div style={{background:"#1a0808",border:"2px solid #8b2222",borderRadius:8,padding:"18px 22px",marginBottom:24,display:"flex",gap:16,alignItems:"flex-start"}}>
+                  <div style={{fontSize:28,lineHeight:1}}>🚨</div>
+                  <div>
+                    <div style={{fontSize:15,color:"#ff6060",letterSpacing:1,fontFamily:"'Bebas Neue',sans-serif",marginBottom:4}}>ALL THREE LIFTS HAVE STALLED</div>
+                    <div style={{fontSize:12,color:"#c07070",lineHeight:1.6}}>Consider transitioning to the next phase — take 10 days rest before resuming.</div>
+                    {nextPhaseObj && (
+                      <button onClick={()=>switchPhase(nextPhaseObj.id,"auto-stall")}
+                        style={{marginTop:12,background:"#8b2222",border:"none",color:"#fff",padding:"8px 18px",borderRadius:4,fontSize:11,letterSpacing:2,cursor:"pointer",fontWeight:700}}>
+                        MOVE TO PHASE {nextPhaseObj.id}: {nextPhaseObj.name} →
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Phase selector */}
+              <div style={{background:"#111",border:"1px solid #1a1815",borderRadius:8,padding:20,marginBottom:24}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:18,flexWrap:"wrap",gap:12}}>
+                  <div>
+                    <div style={{fontSize:9,letterSpacing:3,color:"#3a3530",marginBottom:6}}>CURRENT PHASE</div>
+                    <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:28,color:"#e8c84a",letterSpacing:2,lineHeight:1,marginBottom:4}}>PHASE {currentPhaseObj.id}: {currentPhaseObj.name}</div>
+                    <div style={{fontSize:11,color:"#5a5550"}}>{currentPhaseObj.description}</div>
+                  </div>
+                  <div style={{textAlign:"right"}}>
+                    <div style={{fontSize:9,letterSpacing:3,color:"#3a3530",marginBottom:4}}>WEEKS IN PHASE</div>
+                    <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:36,color:"#e8c84a",letterSpacing:2,lineHeight:1}}>{weeksInPhase}</div>
+                    {phaseState.phaseStartDate && <div style={{fontSize:10,color:"#3a3530",marginTop:3}}>since {fmtDateShort(phaseState.phaseStartDate)}</div>}
+                  </div>
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:20}}>
+                  {PHASES.map(ph=>{
+                    const active=ph.id===phaseState.currentPhase;
+                    return (
+                      <div key={ph.id} className={active?"":"phase-pill"} onClick={()=>{if(!active)switchPhase(ph.id);}}
+                        style={{border:`1px solid ${active?"#e8c84a":"#2a2820"}`,borderRadius:6,padding:"14px 16px",cursor:active?"default":"pointer",background:active?"#1a1710":"transparent"}}>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:14,color:active?"#e8c84a":"#6a6560",letterSpacing:1}}>PHASE {ph.id}</div>
+                          {active&&<span style={{fontSize:9,background:"#e8c84a",color:"#0d0d0d",borderRadius:3,padding:"2px 6px",letterSpacing:1,fontWeight:700}}>ACTIVE</span>}
+                        </div>
+                        <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,color:active?"#fff":"#5a5550",letterSpacing:1,marginBottom:4}}>{ph.name}</div>
+                        <div style={{fontSize:10,color:"#4a4540",lineHeight:1.5}}>{ph.description}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+                {phaseState.transitions.length>0 && (
+                  <div>
+                    <div style={{fontSize:9,letterSpacing:3,color:"#2a2820",marginBottom:10}}>PHASE HISTORY</div>
+                    {[...phaseState.transitions].reverse().slice(0,5).map((t,i)=>(
+                      <div key={i} style={{display:"flex",gap:12,alignItems:"center",fontSize:11,color:"#4a4540",marginBottom:4}}>
+                        <span style={{color:"#3a3530"}}>{fmtDate(t.date)}</span>
+                        <span>Phase {t.from} → Phase {t.to}</span>
+                        {t.reason!=="manual"&&<span style={{fontSize:9,color:"#6a3030",letterSpacing:1}}>{t.reason}</span>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Lift table */}
+              <div style={{background:"#111",border:"1px solid #1a1815",borderRadius:8,marginBottom:24,overflowX:"auto"}}>
+                <div style={{minWidth:640}}>
+                  <div style={{display:"grid",gridTemplateColumns:"1.4fr 1fr 1fr 1fr 1fr 130px",padding:"11px 20px",fontSize:9,letterSpacing:3,color:"#3a3530",borderBottom:"1px solid #1a1815",background:"#0e0e0c"}}>
+                    <span>LIFT</span><span style={{textAlign:"center"}}>LAST LOGGED</span><span style={{textAlign:"center"}}>THIS WEEK</span><span style={{textAlign:"center"}}>NEXT WEEK</span><span style={{textAlign:"center"}}>INCREMENT</span><span style={{textAlign:"center"}}>STATUS</span>
+                  </div>
+                  {progressionData.map((lift,idx)=>{
+                    const stallCount=phaseState.stallCounts[lift.id]||0, stallTriple=stallCount>=3||lift.stalledWeeks>=3;
+                    return (
+                      <div key={lift.id} style={{borderBottom:idx<progressionData.length-1?"1px solid #161410":"none"}}>
+                        <div style={{display:"grid",gridTemplateColumns:"1.4fr 1fr 1fr 1fr 1fr 130px",padding:"16px 20px",alignItems:"center",background:idx%2===0?"#111":"#0f0f0d"}}>
+                          <div>
+                            <div style={{fontSize:14,color:"#fff",marginBottom:2}}>{lift.label}</div>
+                            <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                              {lift.startWeekKey&&<span style={{fontSize:10,color:"#3a3530"}}>+{lift.increment}kg/wk</span>}
+                              {stallCount>0&&<span style={{fontSize:10,color:stallTriple?"#e87070":"#8a7060",letterSpacing:1}}>{stallTriple?"⚠":"·"} stalls: {stallCount}</span>}
+                            </div>
+                            {!lift.hasData&&<div style={{fontSize:10,color:"#4a4540",marginTop:3}}>Log this lift to begin</div>}
+                          </div>
+                          <div style={{textAlign:"center"}}>
+                            {lift.lastLoggedWeight
+                              ? <><div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,color:"#7a7570",letterSpacing:1,lineHeight:1}}>{lift.lastLoggedWeight}<span style={{fontSize:11,color:"#4a4540"}}> kg</span></div>{lift.lastLoggedWeek&&<div style={{fontSize:10,color:"#3a3530",marginTop:2}}>{fmtDateShort(lift.lastLoggedWeek)}</div>}</>
+                              : <span style={{color:"#2a2820"}}>—</span>}
+                          </div>
+                          <div style={{textAlign:"center"}}>
+                            {lift.prescribedWeight
+                              ? <><div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:26,letterSpacing:1,lineHeight:1,color:lift.thisWeekActual?(lift.thisWeekActual>=lift.prescribedWeight?"#4a9a4a":"#e8c84a"):"#e8c84a"}}>{lift.prescribedWeight}<span style={{fontSize:12,color:"#5a5550"}}> kg</span></div>
+                                  {lift.thisWeekActual?<div style={{fontSize:10,color:lift.thisWeekActual>=lift.prescribedWeight?"#4a7a4a":"#7a6030",marginTop:2}}>logged {lift.thisWeekActual} kg {lift.thisWeekActual>=lift.prescribedWeight?"✓":"↓"}</div>:<div style={{fontSize:10,color:"#3a3530",marginTop:2}}>not yet logged</div>}</>
+                              : <span style={{color:"#2a2820"}}>—</span>}
+                          </div>
+                          <div style={{textAlign:"center"}}>
+                            {lift.nextWeight?<div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,color:"#5a6a5a",letterSpacing:1,lineHeight:1}}>{lift.nextWeight}<span style={{fontSize:11,color:"#4a4540"}}> kg</span></div>:<span style={{color:"#2a2820"}}>—</span>}
+                          </div>
+                          <div style={{textAlign:"center"}}>
+                            <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+                              <span style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,color:"#4a9a4a",letterSpacing:1}}>+{lift.increment}</span>
+                              <span style={{fontSize:11,color:"#4a4540"}}>kg</span>
+                              <select value={lift.increment} onChange={e=>{const v=parseFloat(e.target.value);const nc=progConfig.map(l=>l.id===lift.id?{...l,increment:v}:l);setProgConfig(nc);saveProg(progStartWeights,nc);}}
+                                style={{background:"#1a1815",border:"1px solid #2a2820",borderRadius:3,color:"#6a6560",fontSize:10,padding:"2px 4px",cursor:"pointer",marginLeft:4}}>
+                                {[0.5,1,1.25,2,2.5,5].map(v=><option key={v} value={v}>{v}</option>)}
+                              </select>
+                            </div>
+                          </div>
+                          <div style={{textAlign:"center"}}>
+                            <div style={{display:"flex",flexDirection:"column",gap:5,alignItems:"center"}}>
+                              {lift.stalled||stallTriple
+                                ? <span style={{display:"inline-block",background:"#2a1010",border:"1px solid #8b2222",color:"#e87070",borderRadius:4,padding:"4px 8px",fontSize:10,letterSpacing:1}}>⚠ STALLED</span>
+                                : lift.thisWeekActual&&lift.prescribedWeight&&lift.thisWeekActual>=lift.prescribedWeight
+                                  ? <span style={{display:"inline-block",background:"#0d1f0d",border:"1px solid #2a7a2a",color:"#70e870",borderRadius:4,padding:"4px 8px",fontSize:10,letterSpacing:1}}>✓ ON TRACK</span>
+                                  : lift.hasData
+                                    ? <span style={{display:"inline-block",background:"#1a1815",border:"1px solid #2a2820",color:"#5a5550",borderRadius:4,padding:"4px 8px",fontSize:10,letterSpacing:1}}>PENDING</span>
+                                    : <span style={{display:"inline-block",background:"#1a1815",border:"1px solid #2a2820",color:"#3a3530",borderRadius:4,padding:"4px 8px",fontSize:10,letterSpacing:1}}>NO DATA</span>
+                              }
+                              <button className="stall-btn" onClick={()=>bumpStall(lift.id)} title="Record a stall week">+ stall</button>
+                            </div>
+                          </div>
+                        </div>
+                        {lift.history.length>1 && (
+                          <div style={{padding:"0 20px 14px",display:"flex",gap:4,alignItems:"flex-end",height:28}}>
+                            <span style={{fontSize:9,color:"#2a2820",letterSpacing:2,marginRight:8,whiteSpace:"nowrap",paddingBottom:2}}>8W</span>
+                            {lift.history.map((h,i)=>{
+                              const mw=Math.max(...lift.history.map(x=>x.weight));
+                              return <div key={i} title={`${fmtDateShort(h.wk)}: ${h.weight} kg`} style={{flex:1,background:"#252220",height:`${Math.max(mw>0?(h.weight/mw)*100:0,15)}%`,borderRadius:"2px 2px 0 0",minWidth:8,maxWidth:32}}/>;
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Set starting weight */}
+              <div style={{background:"#111",border:"1px solid #1a1815",borderRadius:8,padding:20}}>
+                <div style={{fontSize:10,letterSpacing:3,color:"#3a3530",marginBottom:4}}>SET STARTING WEIGHT</div>
+                <div style={{fontSize:11,color:"#4a4540",marginBottom:18}}>Override the starting point if you're picking up from an existing training weight.</div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12}}>
+                  {progressionData.map(lift=>(
+                    <div key={lift.id}>
+                      <div style={{fontSize:10,color:"#5a5550",letterSpacing:1,marginBottom:8}}>{lift.label}</div>
+                      <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                        <input type="number" placeholder={lift.startWeight?String(lift.startWeight):"kg"} step="1.25"
+                          onBlur={e=>{const v=parseFloat(e.target.value);if(!v)return;const nsw={...progStartWeights,[lift.id]:{weight:v,weekStart:weekStart(toDateStr())}};setProgStartWeights(nsw);saveProg(nsw,progConfig);showFlash(`Starting weight set for ${lift.label}`);e.target.value="";}}
+                          style={{width:"100%",background:"transparent",border:"1px solid #2a2820",borderRadius:4,color:"#e8e0d5",fontSize:14,padding:"8px 10px"}}/>
+                        <span style={{fontSize:12,color:"#4a4540"}}>kg</span>
+                      </div>
+                      {lift.startWeight&&<div style={{fontSize:10,color:"#3a3530",marginTop:5}}>Current: {lift.startWeight} kg · {fmtDateShort(lift.startWeekKey)}</div>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </>}
+
+          </div>{/* /content */}
+
+          {/* CSV Modal */}
+          {csvModal && <>
+            <div onClick={()=>setCsvModal(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.75)",zIndex:400}}/>
+            <div style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",zIndex:401,background:"#161410",border:"1px solid #2a2820",borderRadius:8,padding:28,width:"min(640px,90vw)",maxHeight:"80vh",display:"flex",flexDirection:"column",boxShadow:"0 24px 64px rgba(0,0,0,.9)"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+                <div>
+                  <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,letterSpacing:2,color:"#e8c84a"}}>EXPORT DATA</div>
+                  <div style={{fontSize:10,color:"#3a3530",letterSpacing:2,marginTop:3}}>{entries.length} EXERCISES · CSV FORMAT</div>
+                </div>
+                <span onClick={()=>setCsvModal(false)} style={{fontSize:22,color:"#5a5550",cursor:"pointer",lineHeight:1}}>×</span>
+              </div>
+              <div style={{fontSize:11,color:"#6a6560",marginBottom:14,lineHeight:1.7}}>
+                Select all the text below, copy it, then paste into a <strong style={{color:"#9a9590"}}>new .txt file</strong> and save as <strong style={{color:"#9a9590"}}>iron-log.csv</strong> — or paste directly into Google Sheets or Excel.
+              </div>
+              <textarea readOnly value={csvContent} onFocus={e=>e.target.select()} onClick={e=>e.target.select()}
+                style={{flex:1,minHeight:220,background:"#0d0d0d",border:"1px solid #2a2820",borderRadius:4,color:"#a8a09a",fontSize:11,padding:"12px 14px",fontFamily:"monospace",resize:"none",lineHeight:1.5}}/>
+              <div style={{display:"flex",gap:10,marginTop:16}}>
+                <button onClick={()=>{navigator.clipboard.writeText(csvContent).then(()=>{showFlash("Copied to clipboard!");setCsvModal(false);}).catch(()=>showFlash("Select the text above and copy manually.","error"));}}
+                  style={{flex:1,background:"#e8c84a",border:"none",color:"#0d0d0d",padding:"11px",borderRadius:4,fontSize:11,letterSpacing:2,fontWeight:700,cursor:"pointer"}}>
+                  COPY TO CLIPBOARD
+                </button>
+                <button onClick={()=>setCsvModal(false)} style={{background:"transparent",border:"1px solid #2a2820",color:"#5a5550",padding:"11px 20px",borderRadius:4,fontSize:11,letterSpacing:1,cursor:"pointer"}}>CLOSE</button>
+              </div>
+            </div>
+          </>}
+
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
