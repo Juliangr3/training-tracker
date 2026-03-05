@@ -419,6 +419,57 @@ function GuidedWorkout({template,progData,formDate,entries,onSave,onClose}){
   );
 }
 
+// ── DayCard: collapsible day card in the day picker ─────────────────────────
+function DayCard({tmpl,alreadyLogged,tmplWeight,onStart}){
+  const [open,setOpen]=useState(false);
+  return(
+    <div style={{border:"1px solid #252220",borderRadius:8,overflow:"hidden",background:"#111"}}>
+      {/* Always-visible row: tap to expand/collapse */}
+      <div onClick={()=>setOpen(o=>!o)}
+        style={{padding:"16px 18px",display:"flex",alignItems:"center",gap:12,cursor:"pointer",userSelect:"none"}}>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+            <span style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,color:"#e8c84a",letterSpacing:1,lineHeight:1}}>DAY {tmpl.day}</span>
+            {alreadyLogged&&<span style={{fontSize:9,background:"#0d1f0d",color:"#70e870",border:"1px solid #2a7a2a",borderRadius:3,padding:"2px 7px",letterSpacing:1}}>LOGGED TODAY</span>}
+          </div>
+          <div style={{fontSize:11,color:"#5a5550",marginTop:4}}>{tmpl.label}</div>
+          <div style={{fontSize:10,color:"#3a3530",marginTop:2}}>{tmpl.exercises.length} exercises · tap to {open?"hide":"preview"}</div>
+        </div>
+        <span style={{fontSize:18,color:"#3a3530",flexShrink:0}}>{open?"▴":"▾"}</span>
+      </div>
+
+      {/* Collapsible exercise preview */}
+      {open&&(
+        <div style={{background:"#0e0e0c",borderTop:"1px solid #1a1815"}}>
+          {tmpl.exercises.map((ex,i)=>{
+            const w=tmplWeight(ex.weightKey,ex.weightMult);
+            return(
+              <div key={i} style={{display:"flex",alignItems:"center",padding:"9px 18px",borderBottom:i<tmpl.exercises.length-1?"1px solid #141210":"none",gap:12}}>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:13,color:"#c8c0b5"}}>{ex.name}</div>
+                  {ex.note&&<div style={{fontSize:10,color:"#7a6030",marginTop:1}}>{ex.note}</div>}
+                </div>
+                <span style={{fontSize:11,color:"#5a5550",whiteSpace:"nowrap",flexShrink:0}}>{ex.sets}×{ex.reps}</span>
+                <span style={{fontSize:13,color:w?"#e8c84a":"#3a3530",whiteSpace:"nowrap",minWidth:52,textAlign:"right",fontFamily:"'Bebas Neue',sans-serif",letterSpacing:.5,flexShrink:0}}>{w?`${w} kg`:"—"}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* START button — always visible, never hidden */}
+      <div style={{padding:"12px 16px",borderTop:"1px solid #1a1815",background:"#111"}}>
+        <button onClick={onStart}
+          style={{width:"100%",background:"#e8c84a",border:"none",color:"#0d0d0d",padding:"13px",borderRadius:6,fontSize:12,letterSpacing:2,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}
+          onMouseEnter={e=>e.currentTarget.style.background="#d4b83e"}
+          onMouseLeave={e=>e.currentTarget.style.background="#e8c84a"}>
+          START DAY {tmpl.day} →
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Main App ──────────────────────────────────────────────────────────────────
 function App(){
   const [entries,      setEntries]      = useState([]);
@@ -1097,50 +1148,23 @@ function App(){
         const tmpls=PHASE_TEMPLATES[phaseState.currentPhase]||[];
         return<>
           <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.82)",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:"16px"}} onClick={()=>setDayModal(false)}>
-          <div className="fade-in" onClick={e=>e.stopPropagation()} style={{background:"#161410",border:"1px solid #2a2820",borderRadius:8,width:"min(560px,100%)",maxHeight:"88vh",display:"flex",flexDirection:"column",boxShadow:"0 24px 64px rgba(0,0,0,.95)"}}>
-            <div style={{padding:"22px 24px 16px",borderBottom:"1px solid #1a1815",flexShrink:0,display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+          <div className="fade-in" onClick={e=>e.stopPropagation()} style={{background:"#161410",border:"1px solid #2a2820",borderRadius:8,width:"min(520px,100%)",display:"flex",flexDirection:"column",boxShadow:"0 24px 64px rgba(0,0,0,.95)",maxHeight:"90vh"}}>
+            {/* Header — fixed, never scrolls */}
+            <div style={{padding:"20px 22px 16px",borderBottom:"1px solid #1a1815",flexShrink:0,display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
               <div>
                 <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:24,letterSpacing:2,color:"#e8c84a",lineHeight:1}}>START WORKOUT</div>
-                <div style={{fontSize:10,color:"#3a3530",letterSpacing:2,marginTop:5}}>PHASE {phaseState.currentPhase}: {curPhaseObj.name} · {todayIsoWk} · SELECT DAY</div>
+                <div style={{fontSize:10,color:"#3a3530",letterSpacing:2,marginTop:5}}>PHASE {phaseState.currentPhase}: {curPhaseObj.name} · {todayIsoWk}</div>
               </div>
-              <span onClick={()=>setDayModal(false)} style={{fontSize:22,color:"#5a5550",cursor:"pointer",padding:"2px 6px"}}>×</span>
+              <span onClick={()=>setDayModal(false)} style={{fontSize:26,color:"#5a5550",cursor:"pointer",padding:"2px 8px",lineHeight:1}}>×</span>
             </div>
-            <div style={{overflowY:"auto",padding:"18px 20px 24px",display:"flex",flexDirection:"column",gap:12}}>
+            {/* Day cards — scrollable area */}
+            <div style={{overflowY:"auto",flex:1,padding:"14px 16px 20px",display:"flex",flexDirection:"column",gap:10}}>
               {tmpls.map(tmpl=>{
                 const alreadyLogged=entries.some(e=>e.date===formDate&&tmpl.exercises.some(ex=>ex.name===e.exercise));
                 return(
-                  <div key={tmpl.day} style={{border:"1px solid #252220",borderRadius:8,overflow:"hidden",background:"#111"}}>
-                    <div style={{padding:"13px 18px",display:"flex",justifyContent:"space-between",alignItems:"center",borderBottom:"1px solid #1a1815"}}>
-                      <div>
-                        <span style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,color:"#e8c84a",letterSpacing:1}}>DAY {tmpl.day}</span>
-                        <span style={{fontSize:11,color:"#5a5550",marginLeft:12}}>{tmpl.label}</span>
-                      </div>
-                      {alreadyLogged&&<span style={{fontSize:9,background:"#0d1f0d",color:"#70e870",border:"1px solid #2a7a2a",borderRadius:3,padding:"3px 8px",letterSpacing:1}}>LOGGED TODAY</span>}
-                    </div>
-                    <div style={{background:"#0e0e0c"}}>
-                      {tmpl.exercises.map((ex,i)=>{
-                        const w=tmplWeight(ex.weightKey,ex.weightMult);
-                        return(
-                          <div key={i} style={{display:"grid",gridTemplateColumns:"1fr auto auto",alignItems:"center",padding:"9px 18px",borderBottom:i<tmpl.exercises.length-1?"1px solid #141210":"none",gap:16}}>
-                            <div>
-                              <div style={{fontSize:13,color:"#c8c0b5"}}>{ex.name}</div>
-                              {ex.note&&<div style={{fontSize:10,color:"#7a6030",marginTop:2}}>{ex.note}</div>}
-                            </div>
-                            <div style={{fontSize:11,color:"#5a5550",whiteSpace:"nowrap"}}>{ex.sets}×{ex.reps}</div>
-                            <div style={{fontSize:13,color:w?"#e8c84a":"#3a3530",whiteSpace:"nowrap",textAlign:"right",minWidth:58,fontFamily:"'Bebas Neue',sans-serif"}}>{w?`${w} kg`:"—"}</div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                    <div style={{padding:"12px 18px",borderTop:"1px solid #1a1815"}}>
-                      <button onClick={()=>{setDayModal(false);setGuided({template:tmpl})}}
-                        style={{width:"100%",background:"transparent",border:"1px solid #3a3530",color:"#9a9085",padding:"10px",borderRadius:4,fontSize:11,letterSpacing:2,cursor:"pointer",transition:"all .15s"}}
-                        onMouseEnter={e=>{e.currentTarget.style.borderColor="#e8c84a";e.currentTarget.style.color="#e8c84a"}}
-                        onMouseLeave={e=>{e.currentTarget.style.borderColor="#3a3530";e.currentTarget.style.color="#9a9085"}}>
-                        START DAY {tmpl.day} →
-                      </button>
-                    </div>
-                  </div>
+                  <DayCard key={tmpl.day} tmpl={tmpl} alreadyLogged={alreadyLogged}
+                    tmplWeight={tmplWeight}
+                    onStart={()=>{setDayModal(false);setGuided({template:tmpl})}}/>
                 );
               })}
             </div>
