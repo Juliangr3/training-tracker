@@ -293,8 +293,8 @@ function GuidedWorkout({template,progData,formDate,entries,onSave,onClose}){
 
   return(
     <>
-      <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.87)",zIndex:400}}/>
-      <div className="fade-in" style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",zIndex:401,background:"#161410",border:"1px solid #2a2820",borderRadius:10,width:"min(560px,95vw)",maxHeight:"93vh",display:"flex",flexDirection:"column",boxShadow:"0 24px 64px rgba(0,0,0,.95)"}}>
+      <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.87)",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:"12px"}} onClick={onClose}>
+      <div className="fade-in" onClick={e=>e.stopPropagation()} style={{background:"#161410",border:"1px solid #2a2820",borderRadius:10,width:"min(560px,100%)",maxHeight:"93vh",display:"flex",flexDirection:"column",boxShadow:"0 24px 64px rgba(0,0,0,.95)"}}>
 
         {/* Header */}
         <div style={{padding:"18px 22px 14px",borderBottom:"1px solid #1a1815",flexShrink:0}}>
@@ -413,6 +413,7 @@ function GuidedWorkout({template,progData,formDate,entries,onSave,onClose}){
         </div>
       </div>
 
+      </div>
       {restOn&&<RestTimer seconds={restDur} onDismiss={()=>setRestOn(false)}/>}
     </>
   );
@@ -1095,8 +1096,8 @@ function App(){
       {dayModal&&(()=>{
         const tmpls=PHASE_TEMPLATES[phaseState.currentPhase]||[];
         return<>
-          <div onClick={()=>setDayModal(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.82)",zIndex:400}}/>
-          <div className="fade-in" style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",zIndex:401,background:"#161410",border:"1px solid #2a2820",borderRadius:8,width:"min(560px,92vw)",maxHeight:"88vh",display:"flex",flexDirection:"column",boxShadow:"0 24px 64px rgba(0,0,0,.95)"}}>
+          <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.82)",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:"16px"}} onClick={()=>setDayModal(false)}>
+          <div className="fade-in" onClick={e=>e.stopPropagation()} style={{background:"#161410",border:"1px solid #2a2820",borderRadius:8,width:"min(560px,100%)",maxHeight:"88vh",display:"flex",flexDirection:"column",boxShadow:"0 24px 64px rgba(0,0,0,.95)"}}>
             <div style={{padding:"22px 24px 16px",borderBottom:"1px solid #1a1815",flexShrink:0,display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
               <div>
                 <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:24,letterSpacing:2,color:"#e8c84a",lineHeight:1}}>START WORKOUT</div>
@@ -1144,6 +1145,7 @@ function App(){
               })}
             </div>
           </div>
+          </div>
         </>;
       })()}
 
@@ -1166,8 +1168,8 @@ function App(){
 
       {/* ── CSV Modal ── */}
       {csvModal&&<>
-        <div onClick={()=>setCsvModal(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.75)",zIndex:400}}/>
-        <div style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",zIndex:401,background:"#161410",border:"1px solid #2a2820",borderRadius:8,padding:28,width:"min(640px,90vw)",maxHeight:"80vh",display:"flex",flexDirection:"column",boxShadow:"0 24px 64px rgba(0,0,0,.9)"}}>
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.75)",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:"16px"}} onClick={()=>setCsvModal(false)}>
+        <div onClick={e=>e.stopPropagation()} style={{background:"#161410",border:"1px solid #2a2820",borderRadius:8,padding:28,width:"min(640px,100%)",maxHeight:"80vh",display:"flex",flexDirection:"column",boxShadow:"0 24px 64px rgba(0,0,0,.9)"}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
             <div>
               <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,letterSpacing:2,color:"#e8c84a"}}>EXPORT DATA</div>
@@ -1187,6 +1189,7 @@ function App(){
             </button>
             <button onClick={()=>setCsvModal(false)} style={{background:"transparent",border:"1px solid #2a2820",color:"#5a5550",padding:"11px 20px",borderRadius:4,fontSize:11,cursor:"pointer"}}>CLOSE</button>
           </div>
+        </div>
         </div>
       </>}
 
