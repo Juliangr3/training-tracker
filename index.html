@@ -33,8 +33,9 @@
     .dd-item:hover{background:#1e1c18!important;color:#e8c84a!important}
     .stat-card{background:#111;border:1px solid #1e1c18;border-radius:8px;padding:18px 20px}
     .top-stat{background:#111;border:1px solid #1a1815;border-radius:8px;padding:20px}
-    .phase-pill{border-radius:6px;padding:14px 16px;cursor:pointer;transition:all .15s}
-    .phase-pill:hover{border-color:#5a5540!important;background:#141210!important}
+    .phase-pill{border-radius:6px;padding:14px 16px;transition:all .15s}
+    .phase-pill-clickable{cursor:pointer}
+    .phase-pill-clickable:hover{border-color:#5a5540!important;background:#141210!important}
     .date-group-row{cursor:pointer;transition:background .15s}
     .date-group-row:hover{background:#161410!important}
     .csv-btn{background:transparent;border:1px solid #2a2820;color:#5a5550;padding:5px 12px;border-radius:4px;font-size:10px;letter-spacing:2px;cursor:pointer;transition:all .15s}
@@ -67,20 +68,40 @@ const KEYS = {
 
 // ── Static data ───────────────────────────────────────────────────────────────
 const EXERCISE_LIST = [
-  {group:"Chest",     exercises:["Bench Press","Incline Bench Press","Close Grip Bench Press","Dumbbell Flys"]},
+  {group:"Chest",     exercises:["Bench Press","Incline Bench Press","Close Grip Bench Press","Dumbbell Flys","Dips"]},
   {group:"Legs",      exercises:["Barbell Squat","Hack Squat","Deadlift","Calf Raises"]},
   {group:"Shoulders", exercises:["Barbell Shoulder Press","Dumbbell Shoulder Press","Lateral Raises","Shoulder Flys"]},
-  {group:"Back",      exercises:["Barbell Rows","Lat Pulldown","Shrugs"]},
+  {group:"Back",      exercises:["Barbell Rows","Lat Pulldown","Shrugs","Pull-Ups"]},
   {group:"Core",      exercises:["Crunches","Hanging Leg Raises","Plank"]},
 ];
 
 const PHASES = [
-  {id:1,name:"DELOAD",   days:2,sets:5,reps:5,description:"2 days/week · 5×5 · Build the base"},
-  {id:2,name:"STRENGTH", days:3,sets:5,reps:5,description:"3 days/week · 5×5 · Drive progression"},
-  {id:3,name:"PEAK",     days:2,sets:5,reps:6,description:"2 days/week · 5×6 · Peak output"},
+  {id:1,name:"FOUNDATION", days:2,sets:5,reps:6,description:"2 days/week · 5×6 · Build the base"},
+  {id:2,name:"STRENGTH",   days:3,sets:5,reps:5,description:"3 days/week · 5×5 · Drive progression"},
+  {id:3,name:"PEAK",       days:2,sets:5,reps:6,description:"2 days/week · 5×6 · Peak output"},
 ];
 
+// Reset % applied when COMPLETE PHASE is triggered — varies by transition pair
+const PHASE_RESET_PCT = {
+  "1-2": 0.95,  // Phase 1→2: 95% — carry momentum
+  "2-3": 0.95,  // Phase 2→3: 95% — stay near peak
+  "3-1": 0.80,  // Phase 3→1: 80% — full macrocycle reset
+};
+
 const PHASE_TEMPLATES = {
+  1:[
+    {day:1,label:"Day 1 — Squat / Push / Pull",exercises:[
+      {name:"Barbell Squat", sets:5,reps:6,weightKey:"squat"},
+      {name:"Bench Press",   sets:5,reps:6,weightKey:"bench"},
+      {name:"Lat Pulldown",  sets:5,reps:6},
+    ]},
+    {day:2,label:"Day 2 — Hinge / Pull",exercises:[
+      {name:"Deadlift",              sets:5,reps:6,weightKey:"deadlift"},
+      {name:"Shrugs",                sets:5,reps:6},
+      {name:"Pull-Ups",              sets:5,reps:6},
+      {name:"Close Grip Bench Press",sets:5,reps:6},
+    ]},
+  ],
   2:[
     {day:1,label:"Day 1 — Squat / Push / Pull",exercises:[
       {name:"Barbell Squat",         sets:5,reps:5,weightKey:"squat"},
@@ -103,7 +124,25 @@ const PHASE_TEMPLATES = {
       {name:"Shoulder Flys",         sets:4,reps:12},
       {name:"Crunches",              sets:3,reps:15},
     ]},
-  ]
+  ],
+  3:[
+    {day:1,label:"Day 1 — Squat / Push / Pull",exercises:[
+      {name:"Barbell Squat", sets:5,reps:6,weightKey:"squat"},
+      {name:"Dips",          sets:5,reps:6},
+      {name:"Pull-Ups",      sets:5,reps:6},
+      {name:"Shrugs",        sets:5,reps:6},
+      {name:"Calf Raises",   sets:4,reps:15},
+      {name:"Crunches",      sets:3,reps:15},
+    ]},
+    {day:2,label:"Day 2 — Deadlift / Press",exercises:[
+      {name:"Deadlift",              sets:5,reps:6,weightKey:"deadlift"},
+      {name:"Bench Press",           sets:5,reps:6,weightKey:"bench"},
+      {name:"Lat Pulldown",          sets:5,reps:6},
+      {name:"Barbell Shoulder Press",sets:5,reps:6},
+      {name:"Calf Raises",           sets:4,reps:15},
+      {name:"Crunches",              sets:1,reps:80},
+    ]},
+  ],
 };
 
 const DEFAULT_PROG = [
@@ -111,15 +150,29 @@ const DEFAULT_PROG = [
   {id:"bench",   label:"Bench Press",  increment:1.25},
   {id:"deadlift",label:"Deadlift",     increment:2.5},
 ];
-const DEFAULT_PHASE = {currentPhase:1,phaseStartDate:null,transitions:[],stallCounts:{squat:0,bench:0,deadlift:0}};
+const DEFAULT_PHASE = {
+  currentPhase:1,
+  phaseStartDate:null,
+  transitions:[],
+  stallCounts:{squat:0,bench:0,deadlift:0},
+  peakWeights:{},   // {phaseId: {squat:x, bench:x, deadlift:x}} captured at COMPLETE PHASE
+};
+
+// ── Timezone: Sydney/Australia ────────────────────────────────────────────────
+// Always derive "today" in AEST/AEDT (UTC+10 / UTC+11)
+function todaySydney(){
+  return new Date().toLocaleDateString("en-CA",{timeZone:"Australia/Sydney"}); // returns YYYY-MM-DD
+}
 
 // ── Date / week helpers ───────────────────────────────────────────────────────
-function toDateStr(d=new Date()){return d.toISOString().slice(0,10)}
+function toDateStr(d=new Date()){
+  return d.toLocaleDateString("en-CA",{timeZone:"Australia/Sydney"});
+}
 function fmtDate(s){if(!s)return"";return new Date(s+"T00:00:00").toLocaleDateString("en-AU",{day:"numeric",month:"short",year:"numeric"})}
 function fmtDateShort(s){if(!s)return"";return new Date(s+"T00:00:00").toLocaleDateString("en-AU",{day:"numeric",month:"short"})}
 function fmtDow(s){if(!s)return"";return new Date(s+"T00:00:00").toLocaleDateString("en-AU",{weekday:"long"})}
-function monStart(s){const d=new Date(s+"T00:00:00"),dy=d.getDay();d.setDate(d.getDate()-dy+(dy===0?-6:1));return toDateStr(d)}
-function weekEnd(ws){const d=new Date(ws+"T00:00:00");d.setDate(d.getDate()+6);return toDateStr(d)}
+function monStart(s){const d=new Date(s+"T00:00:00"),dy=d.getDay();d.setDate(d.getDate()-dy+(dy===0?-6:1));return d.toLocaleDateString("en-CA")}
+function weekEnd(ws){const d=new Date(ws+"T00:00:00");d.setDate(d.getDate()+6);return d.toLocaleDateString("en-CA")}
 function weeksBetween(a,b){return Math.floor((new Date(b+"T00:00:00")-new Date(a+"T00:00:00"))/(7*24*60*60*1e3))}
 function pct(a,b){return(!b||b===0)?null:Math.round(((a-b)/b)*100)}
 
@@ -130,6 +183,18 @@ function isoWeek(dateStr){
   const jan4=new Date(thu.getFullYear(),0,4);
   const w=1+Math.round((thu-jan4)/6048e5);
   return thu.getFullYear()+"-W"+(w<10?"0":"")+w;
+}
+// Short display e.g. "W11 2026"
+function isoWeekShort(dateStr){
+  const full=isoWeek(dateStr);
+  const [yr,wk]=full.split("-");
+  return wk+" "+yr;
+}
+// Advance one ISO week
+function nextIsoWeek(wkLabel){
+  const y=parseInt(wkLabel.slice(0,4)),w=parseInt(wkLabel.slice(6));
+  const nw=w>=52?1:w+1,ny=w>=52?y+1:y;
+  return ny+"-W"+(nw<10?"0":"")+nw;
 }
 
 function DeltaBadge({val,unit=""}){
@@ -182,7 +247,6 @@ function GuidedWorkout({template,progData,formDate,entries,onSave,onClose}){
     return String(Math.round(base*(ex.weightMult||1)*2)/2);
   }
 
-  // Build initial set rows per exercise — pre-fill from last session if exists
   function initRows(ex){
     const prevSets=[...entries].reverse().filter(e=>e.exercise===ex.name&&e.setNumber!=null);
     const pw=prescribedW(ex);
@@ -190,19 +254,18 @@ function GuidedWorkout({template,progData,formDate,entries,onSave,onClose}){
     if(prevSets.length){
       return Array.from({length:count},(_,i)=>{
         const found=prevSets.find(e=>e.setNumber===i+1);
-        return{reps:found?String(found.reps):String(ex.reps),weight:pw||( found?String(found.weight):""),warmup:false,done:false,restSec:null};
+        return{reps:found?String(found.reps):String(ex.reps),weight:pw||(found?String(found.weight):""),warmup:false,done:false,restSec:null};
       });
     }
     return Array.from({length:count},()=>({reps:String(ex.reps),weight:pw||"",warmup:false,done:false,restSec:null}));
   }
 
-  const [exIdx,setExIdx]       = useState(0);
-  const [allRows,setAllRows]   = useState(()=>template.exercises.map(ex=>initRows(ex)));
-  const [restOn,setRestOn]     = useState(false);
-  const [restDur,setRestDur]   = useState(120);
-  const logTimes               = useRef({});
+  const [exIdx,setExIdx]     = useState(0);
+  const [allRows,setAllRows] = useState(()=>template.exercises.map(ex=>initRows(ex)));
+  const [restOn,setRestOn]   = useState(false);
+  const [restDur,setRestDur] = useState(120);
+  const logTimes             = useRef({});
 
-  // re-fill prescribed weight whenever we navigate to a new exercise
   useEffect(()=>{
     const ex=template.exercises[exIdx];
     const pw=prescribedW(ex);
@@ -221,7 +284,6 @@ function GuidedWorkout({template,progData,formDate,entries,onSave,onClose}){
     setAllRows(prev=>{
       const next=prev.map(r=>[...r]);
       next[exIdx][si]={...next[exIdx][si],[field]:val};
-      // cascade weight down to blank rows below
       if(field==="weight"){
         for(let j=si+1;j<next[exIdx].length;j++){
           if(!next[exIdx][j].weight)next[exIdx][j]={...next[exIdx][j],weight:val};
@@ -287,7 +349,6 @@ function GuidedWorkout({template,progData,formDate,entries,onSave,onClose}){
   }
 
   const doneSets=rows.filter(r=>r.done).length;
-  // detect weight drop between consecutive working sets
   const workWeights=rows.filter(r=>!r.warmup&&r.weight).map(r=>parseFloat(r.weight)||0);
   const dropDetected=workWeights.length>=2&&workWeights[workWeights.length-1]<workWeights[workWeights.length-2];
 
@@ -295,7 +356,6 @@ function GuidedWorkout({template,progData,formDate,entries,onSave,onClose}){
     <>
       <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.87)",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:"12px"}} onClick={onClose}>
       <div className="fade-in" onClick={e=>e.stopPropagation()} style={{background:"#161410",border:"1px solid #2a2820",borderRadius:10,width:"min(560px,100%)",maxHeight:"93vh",display:"flex",flexDirection:"column",boxShadow:"0 24px 64px rgba(0,0,0,.95)"}}>
-
         {/* Header */}
         <div style={{padding:"18px 22px 14px",borderBottom:"1px solid #1a1815",flexShrink:0}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
@@ -305,7 +365,6 @@ function GuidedWorkout({template,progData,formDate,entries,onSave,onClose}){
             </div>
             <span onClick={onClose} style={{fontSize:22,color:"#5a5550",cursor:"pointer",padding:"2px 6px"}}>×</span>
           </div>
-          {/* Exercise nav pills */}
           <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
             {template.exercises.map((e,i)=>{
               const isDone=allRows[i].some(r=>r.done);
@@ -318,36 +377,27 @@ function GuidedWorkout({template,progData,formDate,entries,onSave,onClose}){
             })}
           </div>
         </div>
-
         {/* Body */}
         <div style={{flex:1,overflowY:"auto",padding:"18px 22px"}}>
-          {/* Exercise title */}
           <div style={{marginBottom:14}}>
             <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:28,color:"#fff",letterSpacing:1,lineHeight:1}}>{ex.name}</div>
             {ex.note&&<div style={{fontSize:10,color:"#7a6030",marginTop:4}}>{ex.note}</div>}
             <div style={{fontSize:11,color:"#5a5550",marginTop:4}}>{ex.sets} sets · {ex.reps} reps target</div>
           </div>
-
-          {/* Weight drop warning */}
           {dropDetected&&(
             <div style={{background:"#1a1008",border:"1px solid #7a5020",borderRadius:6,padding:"9px 14px",marginBottom:14,fontSize:11,color:"#e8a040"}}>
               ⚠ Weight dropped — possible overload indicator
             </div>
           )}
-
-          {/* Column headers */}
           <div style={{display:"grid",gridTemplateColumns:"28px 34px 1fr 1fr 64px 28px",gap:8,padding:"0 6px 6px",fontSize:9,letterSpacing:2,color:"#3a3530"}}>
             <span>#</span><span>W</span><span>REPS</span><span>KG</span><span style={{textAlign:"center"}}>ACTION</span><span/>
           </div>
-
-          {/* Set rows */}
           <div style={{display:"flex",flexDirection:"column",gap:5,marginBottom:14}}>
             {rows.map((row,si)=>{
               const wBelow=si>0&&parseFloat(row.weight)>0&&parseFloat(rows[si-1].weight)>0&&parseFloat(row.weight)<parseFloat(rows[si-1].weight);
               return(
                 <div key={si} className="set-row" style={{display:"grid",gridTemplateColumns:"28px 34px 1fr 1fr 64px 28px",gap:8,alignItems:"center",padding:"8px 6px",background:row.done?"#0d1a0d":wBelow?"#1a1008":"transparent"}}>
                   <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,color:row.done?"#4a9a4a":wBelow?"#e8a040":"#5a5550",textAlign:"center",lineHeight:1}}>{si+1}</div>
-                  {/* Warm-up toggle */}
                   <div onClick={()=>updRow(si,"warmup",!row.warmup)} title="Toggle warm-up set"
                     style={{cursor:"pointer",width:26,height:26,borderRadius:4,border:`1px solid ${row.warmup?"#c87820":"#2a2820"}`,background:row.warmup?"#c8782022":"transparent",display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,color:row.warmup?"#c87820":"#3a3530",letterSpacing:.5,userSelect:"none",flexShrink:0}}>
                     W
@@ -359,11 +409,11 @@ function GuidedWorkout({template,progData,formDate,entries,onSave,onClose}){
                     placeholder="kg"
                     style={{background:"transparent",border:`1px solid ${wBelow?"#7a5020":row.done?"#1a4a1a":"#2a2820"}`,borderRadius:4,color:wBelow?"#e8a040":row.done?"#6a9a6a":"#e8e0d5",fontSize:15,padding:"7px 10px",width:"100%"}}/>
                   {row.done
-                    ? <div style={{textAlign:"center"}}>
+                    ?<div style={{textAlign:"center"}}>
                         <div style={{fontSize:12,color:"#4a9a4a"}}>✓</div>
-                        {row.restSec&&<div style={{fontSize:9,color:"#3a5a3a",marginTop:1}}>{row.restSec}s rest</div>}
+                        {row.restSec&&<div style={{fontSize:9,color:"#3a5a3a",marginTop:1}}>{row.restSec}s</div>}
                       </div>
-                    : <button onClick={()=>logSet(si)}
+                    :<button onClick={()=>logSet(si)}
                         style={{background:"#1a2a1a",border:"1px solid #2a5a2a",color:"#70c870",borderRadius:4,padding:"7px 0",fontSize:10,cursor:"pointer",width:"100%",letterSpacing:1}}>
                         LOG
                       </button>
@@ -376,8 +426,6 @@ function GuidedWorkout({template,progData,formDate,entries,onSave,onClose}){
               );
             })}
           </div>
-
-          {/* Add set + rest duration */}
           <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:18,flexWrap:"wrap"}}>
             <button onClick={addRow}
               style={{background:"transparent",border:"1px dashed #2a2820",color:"#5a5550",padding:"7px 16px",borderRadius:4,fontSize:10,cursor:"pointer",letterSpacing:2}}
@@ -393,13 +441,11 @@ function GuidedWorkout({template,progData,formDate,entries,onSave,onClose}){
               </select>
             </div>
           </div>
-
           <div style={{fontSize:11,color:"#4a4540"}}>
             {doneSets}/{rows.length} sets logged
             {rows.filter(r=>r.warmup&&r.done).length>0&&<span style={{color:"#7a6030"}}> · {rows.filter(r=>r.warmup&&r.done).length} warm-up</span>}
           </div>
         </div>
-
         {/* Footer */}
         <div style={{padding:"14px 22px",borderTop:"1px solid #1a1815",flexShrink:0,display:"flex",gap:10}}>
           <button onClick={()=>setExIdx(i=>Math.max(0,i-1))} disabled={exIdx===0}
@@ -412,19 +458,17 @@ function GuidedWorkout({template,progData,formDate,entries,onSave,onClose}){
           </button>
         </div>
       </div>
-
       </div>
       {restOn&&<RestTimer seconds={restDur} onDismiss={()=>setRestOn(false)}/>}
     </>
   );
 }
 
-// ── DayCard: collapsible day card in the day picker ─────────────────────────
+// ── DayCard: collapsible day card in the day picker ───────────────────────────
 function DayCard({tmpl,alreadyLogged,tmplWeight,onStart}){
   const [open,setOpen]=useState(false);
   return(
     <div style={{border:"1px solid #252220",borderRadius:8,overflow:"hidden",background:"#111"}}>
-      {/* Always-visible row: tap to expand/collapse */}
       <div onClick={()=>setOpen(o=>!o)}
         style={{padding:"16px 18px",display:"flex",alignItems:"center",gap:12,cursor:"pointer",userSelect:"none"}}>
         <div style={{flex:1,minWidth:0}}>
@@ -437,8 +481,6 @@ function DayCard({tmpl,alreadyLogged,tmplWeight,onStart}){
         </div>
         <span style={{fontSize:18,color:"#3a3530",flexShrink:0}}>{open?"▴":"▾"}</span>
       </div>
-
-      {/* Collapsible exercise preview */}
       {open&&(
         <div style={{background:"#0e0e0c",borderTop:"1px solid #1a1815"}}>
           {tmpl.exercises.map((ex,i)=>{
@@ -456,8 +498,6 @@ function DayCard({tmpl,alreadyLogged,tmplWeight,onStart}){
           })}
         </div>
       )}
-
-      {/* START button — always visible, never hidden */}
       <div style={{padding:"12px 16px",borderTop:"1px solid #1a1815",background:"#111"}}>
         <button onClick={onStart}
           style={{width:"100%",background:"#e8c84a",border:"none",color:"#0d0d0d",padding:"13px",borderRadius:6,fontSize:12,letterSpacing:2,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}
@@ -475,7 +515,7 @@ function App(){
   const [entries,      setEntries]      = useState([]);
   const [view,         setView]         = useState("log");
   const [form,         setForm]         = useState({exercise:"",sets:"",reps:"",weight:"",notes:"",pr:false});
-  const [formDate,     setFormDate]     = useState(toDateStr());
+  const [formDate,     setFormDate]     = useState(todaySydney());
   const [editingId,    setEditingId]    = useState(null);
   const [loaded,       setLoaded]       = useState(false);
   const [flash,        setFlash]        = useState(null);
@@ -489,8 +529,9 @@ function App(){
   const [startWeights, setStartWeights] = useState({});
   const [phaseState,   setPhaseState]   = useState(DEFAULT_PHASE);
   const [dayModal,     setDayModal]     = useState(false);
-  const [guided,       setGuided]       = useState(null);  // {template}
-  const [cardio,       setCardio]       = useState({});    // {dateStr:bool}
+  const [guided,       setGuided]       = useState(null);
+  const [cardio,       setCardio]       = useState({});
+  const [completeModal,setCompleteModal]= useState(false); // confirm complete phase
 
   const dropRef = useRef(null);
   const inpRef  = useRef(null);
@@ -514,16 +555,97 @@ function App(){
   const savePhase=ps=>LS.set(KEYS.phase,ps);
   const saveCardio=c=>LS.set(KEYS.cardio,c);
 
-  function flash2(msg,type="success"){setFlash({msg,type});setTimeout(()=>setFlash(null),2400)}
+  function flash2(msg,type="success"){setFlash({msg,type});setTimeout(()=>setFlash(null),2800)}
 
+  // ── Phase transition helpers ──────────────────────────────────────────────
+  const MIN_PHASE_WEEKS = 5;
+
+  function weeksInCurrentPhase(){
+    if(!phaseState.phaseStartDate)return 0;
+    return weeksBetween(phaseState.phaseStartDate, todaySydney());
+  }
+
+  function canAdvancePhase(toId){
+    // Only block forward transitions
+    if(toId<=phaseState.currentPhase)return true;
+    return weeksInCurrentPhase()>=MIN_PHASE_WEEKS;
+  }
+
+  function weeksUntilEligible(){
+    return Math.max(0, MIN_PHASE_WEEKS - weeksInCurrentPhase());
+  }
+
+  // Capture highest working weight per lift since phaseStartDate
+  function capturePeakWeights(fromPhaseId){
+    const start=phaseState.phaseStartDate;
+    const peaks={};
+    DEFAULT_PROG.forEach(lift=>{
+      const relevant=entries.filter(e=>
+        e.exercise.toLowerCase()===lift.label.toLowerCase()&&
+        !e.warmup&&
+        (!start||e.date>=start)
+      );
+      if(relevant.length){
+        peaks[lift.id]=Math.max(...relevant.map(e=>parseFloat(e.weight)||0));
+      }
+    });
+    return peaks;
+  }
+
+  // Complete phase: capture peaks, calculate reset weights, switch phase
+  function completePhase(){
+    const fromId=phaseState.currentPhase;
+    // Next phase: wraps 3→1
+    const toId=fromId>=3?1:fromId+1;
+    const resetPct=PHASE_RESET_PCT[`${fromId}-${toId}`]||0.80;
+    const peaks=capturePeakWeights(fromId);
+    const now=todaySydney();
+    const nowWk=isoWeek(now);
+
+    // Set start weights for next phase at resetPct of peak, rounded to 0.5kg
+    const newSW={...startWeights};
+    DEFAULT_PROG.forEach(lift=>{
+      if(peaks[lift.id]){
+        const reset=Math.round(peaks[lift.id]*resetPct*2)/2;
+        newSW[lift.id]={weight:reset,weekStart:nowWk};
+      }
+    });
+
+    const ps={
+      ...phaseState,
+      currentPhase:toId,
+      phaseStartDate:now,
+      transitions:[...phaseState.transitions,{
+        from:fromId,to:toId,date:now,
+        isoWeek:nowWk,
+        reason:"complete",
+        peaks,
+        resetPct,
+      }],
+      stallCounts:{squat:0,bench:0,deadlift:0},
+      peakWeights:{...(phaseState.peakWeights||{}),[fromId]:peaks},
+    };
+
+    setPhaseState(ps);savePhase(ps);
+    setStartWeights(newSW);saveProg(newSW,progCfg);
+    setCompleteModal(false);
+    flash2(`Phase ${fromId} complete → Phase ${toId} starts. Reset weights calculated.`);
+  }
+
+  // Manual phase switch (no peak capture, no 5-week check for backwards moves)
   function switchPhase(toId,reason="manual"){
-    const now=toDateStr();
+    if(!canAdvancePhase(toId)){
+      flash2(`${weeksUntilEligible()} more week${weeksUntilEligible()!==1?"s":""} needed before advancing`,"error");
+      return;
+    }
+    const now=todaySydney();
     const ps={...phaseState,currentPhase:toId,phaseStartDate:now,
-      transitions:[...phaseState.transitions,{from:phaseState.currentPhase,to:toId,date:now,reason}],
+      transitions:[...phaseState.transitions,{from:phaseState.currentPhase,to:toId,date:now,isoWeek:isoWeek(now),reason}],
       stallCounts:{squat:0,bench:0,deadlift:0}};
     setPhaseState(ps);savePhase(ps);
     flash2(`Switched to Phase ${toId}: ${PHASES[toId-1].name}`);
   }
+
   function bumpStall(id){
     const ps={...phaseState,stallCounts:{...phaseState.stallCounts,[id]:(phaseState.stallCounts[id]||0)+1}};
     setPhaseState(ps);savePhase(ps);
@@ -553,7 +675,7 @@ function App(){
     const ne=editingId?entries.map(e=>e.id===editingId?entry:e):[...entries,entry];
     setEntries(ne);saveEntries(ne);
     setForm({exercise:"",sets:"",reps:"",weight:"",notes:"",pr:false});
-    setFormDate(toDateStr());setEditingId(null);setCustomMode(false);
+    setFormDate(todaySydney());setEditingId(null);setCustomMode(false);
     flash2(editingId?"Updated!":"Logged!");
   }
   function deleteEntry(id){const ne=entries.filter(e=>e.id!==id);setEntries(ne);saveEntries(ne);flash2("Removed.","error")}
@@ -565,17 +687,34 @@ function App(){
 
   function exportCSV(){
     if(!entries.length){flash2("Nothing to export.","error");return}
-    const hdr=["ISO Week","Date","Day of Week","Exercise","Set #","Warm-up","Reps","Weight (kg)","Rest After (sec)","PR","Cardio","Notes"];
+    const hdr=["ISO Week","Date","Day of Week","Phase","Exercise","Set #","Warm-up","Reps","Weight (kg)","Rest After (sec)","PR","Cardio","Notes"];
     const rows=[...entries].sort((a,b)=>a.date.localeCompare(b.date)||a.timestamp.localeCompare(b.timestamp))
-      .map(e=>[isoWeek(e.date),e.date,fmtDow(e.date),`"${e.exercise.replace(/"/g,'""')}"`,
-        e.setNumber||"",e.warmup?"Yes":"No",e.reps,e.weight,
-        e.restAfterSec||"",e.pr?"Yes":"No",cardio[e.date]?"Yes":"No",
-        `"${(e.notes||"").replace(/"/g,'""')}"`]);
+      .map(e=>{
+        // determine phase on this date
+        const phaseOnDate=getPhaseOnDate(e.date);
+        return[isoWeek(e.date),e.date,fmtDow(e.date),phaseOnDate?`Phase ${phaseOnDate}`:"",
+          `"${e.exercise.replace(/"/g,'""')}"`,
+          e.setNumber||"",e.warmup?"Yes":"No",e.reps,e.weight,
+          e.restAfterSec||"",e.pr?"Yes":"No",cardio[e.date]?"Yes":"No",
+          `"${(e.notes||"").replace(/"/g,'""')}"`];
+      });
     setCsvContent([hdr,...rows].map(r=>r.join(",")).join("\n"));
     setCsvModal(true);
   }
 
-  // ── Stats (excludes warm-up sets) ─────────────────────────────────────────
+  // Determine which phase was active on a given date
+  function getPhaseOnDate(date){
+    const sorted=[...phaseState.transitions].sort((a,b)=>a.date.localeCompare(b.date));
+    let phase=phaseState.transitions.length?null:phaseState.currentPhase;
+    // find the transition that was active on this date
+    for(let i=0;i<sorted.length;i++){
+      if(date<sorted[i].date){phase=i===0?null:sorted[i-1].to;break;}
+      if(i===sorted.length-1)phase=sorted[i].to;
+    }
+    return phase||phaseState.currentPhase;
+  }
+
+  // ── Stats ─────────────────────────────────────────────────────────────────
   function weekStats(ws){
     const we=weekEnd(ws);
     const wE=entries.filter(e=>e.date>=ws&&e.date<=we&&!e.warmup);
@@ -596,9 +735,9 @@ function App(){
     return wts.length?Math.max(...wts):null;
   }
 
-  // ── Progression: ISO-week keyed, warm-ups excluded ────────────────────────
+  // ── Progression ───────────────────────────────────────────────────────────
   function getProgData(){
-    const todayW=isoWeek(toDateStr());
+    const todayW=isoWeek(todaySydney());
     return progCfg.map(lift=>{
       const liftName=lift.label.toLowerCase();
       const weekMap={};
@@ -613,21 +752,20 @@ function App(){
       if(!sw&&sorted.length){sw=weekMap[sorted[0]];swk=sorted[0]}
       let prescribed=null;
       if(sw&&swk){
-        // count ISO weeks from swk to todayW
         let cnt=0,cur=swk;
-        while(cur<todayW){
-          const y=parseInt(cur.slice(0,4)),w=parseInt(cur.slice(6));
-          const nw=w>=52?1:w+1,ny=w>=52?y+1:y;
-          cur=ny+"-W"+(nw<10?"0":"")+nw;cnt++;
-        }
+        while(cur<todayW){cur=nextIsoWeek(cur);cnt++;}
         prescribed=+(sw+cnt*lift.increment).toFixed(2);
       }
       const next=prescribed!==null?+(prescribed+lift.increment).toFixed(2):null;
       const rec=sorted.slice(-3),recW=rec.map(k=>weekMap[k]);
       const stalled=recW.length>=2&&recW.every(w=>w===recW[0]);
       const lastWk=sorted.length?sorted[sorted.length-1]:null;
+      const thisWeekActual=weekMap[todayW]||null;
+      // Load %: actual this week vs prescribed
+      const loadPct=(thisWeekActual&&prescribed&&prescribed>0)
+        ?Math.round((thisWeekActual/prescribed)*100):null;
       return{...lift,prescribedWeight:prescribed,nextWeight:next,
-        thisWeekActual:weekMap[todayW]||null,
+        thisWeekActual,loadPct,
         lastLoggedWeek:lastWk,lastLoggedWeight:lastWk?weekMap[lastWk]:null,
         stalled,stalledWeeks:stalled?recW.length:0,
         history:sorted.slice(-8).map(wk=>({wk,weight:weekMap[wk]})),
@@ -646,7 +784,7 @@ function App(){
   }
 
   // ── Derived ───────────────────────────────────────────────────────────────
-  const today         = toDateStr();
+  const today         = todaySydney();
   const thisMonStart  = monStart(today);
   const thisWeekEnd   = weekEnd(thisMonStart);
   const todayIsoWk    = isoWeek(today);
@@ -661,8 +799,11 @@ function App(){
   const progData      = getProgData();
   const weeksInPhase  = phaseState.phaseStartDate?weeksBetween(phaseState.phaseStartDate,today):0;
   const curPhaseObj   = PHASES.find(p=>p.id===phaseState.currentPhase)||PHASES[0];
-  const nextPhaseObj  = PHASES.find(p=>p.id===phaseState.currentPhase+1)||null;
+  const nextPhaseId   = phaseState.currentPhase>=3?1:phaseState.currentPhase+1;
+  const nextPhaseObj  = PHASES.find(p=>p.id===nextPhaseId)||PHASES[0];
   const allStalled    = progData.every(l=>l.stalled||(phaseState.stallCounts[l.id]||0)>=3);
+  const eligible      = weeksInPhase>=MIN_PHASE_WEEKS;
+  const weeksLeft     = weeksUntilEligible();
 
   if(!loaded)return<div style={{background:"#0a0a0a",minHeight:"100vh",color:"#e8c84a",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Bebas Neue',sans-serif",fontSize:24,letterSpacing:4}}>LOADING...</div>;
 
@@ -728,7 +869,6 @@ function App(){
             </div>
             <div style={{borderTop:"1px solid #1a1815",marginBottom:20}}/>
             <div style={{fontSize:10,letterSpacing:3,color:"#3a3530",marginBottom:18}}>{editingId?"EDIT EXERCISE":"EXERCISE"}</div>
-
             <div style={{marginBottom:18}}>
               <div style={{display:"flex",gap:10,marginBottom:10}}>
                 {[["FROM LIST",false],["CUSTOM",true]].map(([lbl,cm])=>(
@@ -780,7 +920,6 @@ function App(){
                 </div>
               }
             </div>
-
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14,marginBottom:16}}>
               {[{l:"SETS",k:"sets",p:"5"},{l:"REPS",k:"reps",p:"5"},{l:"WEIGHT (KG)",k:"weight",p:"80"}].map(({l,k,p})=>(
                 <div key={k}>
@@ -862,7 +1001,7 @@ function App(){
                         {fmtDow(date)}, {fmtDate(date)}
                         {date===today&&<span style={{marginLeft:10,fontSize:9,color:"#e8c84a",letterSpacing:2}}>TODAY</span>}
                       </div>
-                      <div style={{fontSize:10,color:"#3a3530",marginTop:2}}>{isoWeek(date)} · {list.length} exercise{list.length!==1?"s":""}</div>
+                      <div style={{fontSize:10,color:"#3a3530",marginTop:2}}>{isoWeekShort(date)} · {list.length} exercise{list.length!==1?"s":""}</div>
                     </div>
                     {cardio[date]&&<span title="Cardio done" style={{fontSize:14}}>🏃</span>}
                     {hasPR&&<span style={{fontSize:14}}>🏆</span>}
@@ -993,16 +1132,16 @@ function App(){
               <div style={{fontSize:28,lineHeight:1}}>🚨</div>
               <div>
                 <div style={{fontSize:15,color:"#ff6060",letterSpacing:1,fontFamily:"'Bebas Neue',sans-serif",marginBottom:4}}>ALL THREE LIFTS HAVE STALLED</div>
-                <div style={{fontSize:12,color:"#c07070",lineHeight:1.6}}>Consider transitioning to the next phase — take 10 days rest before resuming.</div>
-                {nextPhaseObj&&<button onClick={()=>switchPhase(nextPhaseObj.id,"auto-stall")}
+                <div style={{fontSize:12,color:"#c07070",lineHeight:1.6}}>Consider completing this phase and transitioning to the next.</div>
+                {eligible&&<button onClick={()=>setCompleteModal(true)}
                   style={{marginTop:12,background:"#8b2222",border:"none",color:"#fff",padding:"8px 18px",borderRadius:4,fontSize:11,letterSpacing:2,cursor:"pointer",fontWeight:700}}>
-                  MOVE TO PHASE {nextPhaseObj.id}: {nextPhaseObj.name} →
+                  COMPLETE PHASE {phaseState.currentPhase} →
                 </button>}
               </div>
             </div>
           )}
 
-          {/* Phase selector */}
+          {/* Phase card */}
           <div style={{background:"#111",border:"1px solid #1a1815",borderRadius:8,padding:20,marginBottom:24}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:18,flexWrap:"wrap",gap:12}}>
               <div>
@@ -1016,47 +1155,87 @@ function App(){
                 {phaseState.phaseStartDate&&<div style={{fontSize:10,color:"#3a3530",marginTop:3}}>since {fmtDateShort(phaseState.phaseStartDate)}</div>}
               </div>
             </div>
+
+            {/* Phase pills */}
             <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:20}}>
               {PHASES.map(ph=>{
                 const active=ph.id===phaseState.currentPhase;
+                const isForward=ph.id>phaseState.currentPhase;
+                const locked=isForward&&!eligible;
                 return(
-                  <div key={ph.id} className={active?"":"phase-pill"} onClick={()=>{if(!active)switchPhase(ph.id)}}
-                    style={{border:`1px solid ${active?"#e8c84a":"#2a2820"}`,borderRadius:6,padding:"14px 16px",cursor:active?"default":"pointer",background:active?"#1a1710":"transparent"}}>
+                  <div key={ph.id}
+                    className={`phase-pill${(!active&&!locked)?" phase-pill-clickable":""}`}
+                    onClick={()=>{if(!active&&!locked)switchPhase(ph.id)}}
+                    style={{border:`1px solid ${active?"#e8c84a":locked?"#1e1c18":"#2a2820"}`,borderRadius:6,padding:"14px 16px",cursor:active||locked?"default":"pointer",background:active?"#1a1710":locked?"#0d0d0b":"transparent",opacity:locked?0.5:1}}>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-                      <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:14,color:active?"#e8c84a":"#6a6560",letterSpacing:1}}>PHASE {ph.id}</div>
+                      <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:14,color:active?"#e8c84a":locked?"#3a3530":"#6a6560",letterSpacing:1}}>PHASE {ph.id}</div>
                       {active&&<span style={{fontSize:9,background:"#e8c84a",color:"#0d0d0d",borderRadius:3,padding:"2px 6px",letterSpacing:1,fontWeight:700}}>ACTIVE</span>}
+                      {locked&&<span style={{fontSize:9,color:"#3a3530",letterSpacing:1}}>🔒 {weeksLeft}w</span>}
                     </div>
-                    <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,color:active?"#fff":"#5a5550",letterSpacing:1,marginBottom:4}}>{ph.name}</div>
-                    <div style={{fontSize:10,color:"#4a4540",lineHeight:1.5}}>{ph.description}</div>
+                    <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,color:active?"#fff":locked?"#2a2820":"#5a5550",letterSpacing:1,marginBottom:4}}>{ph.name}</div>
+                    <div style={{fontSize:10,color:locked?"#2a2820":"#4a4540",lineHeight:1.5}}>{ph.description}</div>
                   </div>
                 );
               })}
             </div>
+
+            {/* Complete Phase button */}
+            <div style={{marginBottom:20}}>
+              {eligible
+                ?<button onClick={()=>setCompleteModal(true)}
+                    style={{background:"transparent",border:"1px solid #4a9a4a",color:"#4a9a4a",padding:"10px 22px",borderRadius:4,fontSize:11,letterSpacing:2,cursor:"pointer",fontWeight:700,transition:"all .15s"}}
+                    onMouseEnter={e=>{e.currentTarget.style.background="#0d1f0d"}}
+                    onMouseLeave={e=>{e.currentTarget.style.background="transparent"}}>
+                    ✓ COMPLETE PHASE {phaseState.currentPhase} →
+                  </button>
+                :<div style={{fontSize:11,color:"#3a3530",display:"flex",alignItems:"center",gap:8}}>
+                    <span>🔒</span>
+                    <span>{weeksLeft} more week{weeksLeft!==1?"s":""} until phase can be completed ({weeksInPhase}/{MIN_PHASE_WEEKS} weeks done)</span>
+                  </div>
+              }
+            </div>
+
+            {/* Phase history */}
             {phaseState.transitions.length>0&&(
               <div>
                 <div style={{fontSize:9,letterSpacing:3,color:"#2a2820",marginBottom:10}}>PHASE HISTORY</div>
-                {[...phaseState.transitions].reverse().slice(0,5).map((t,i)=>(
-                  <div key={i} style={{display:"flex",gap:12,alignItems:"center",fontSize:11,color:"#4a4540",marginBottom:4}}>
-                    <span style={{color:"#3a3530"}}>{fmtDate(t.date)}</span>
+                {[...phaseState.transitions].reverse().slice(0,8).map((t,i)=>(
+                  <div key={i} style={{display:"flex",gap:12,alignItems:"center",fontSize:11,color:"#4a4540",marginBottom:6,flexWrap:"wrap"}}>
+                    <span style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:13,color:"#5a5550",letterSpacing:1,minWidth:72}}>{t.isoWeek||isoWeekShort(t.date)}</span>
                     <span>Phase {t.from} → Phase {t.to}</span>
-                    {t.reason!=="manual"&&<span style={{fontSize:9,color:"#6a3030",letterSpacing:1}}>{t.reason}</span>}
+                    {t.reason==="complete"&&t.peaks&&(
+                      <span style={{fontSize:9,color:"#3a5a3a",background:"#0a1a0a",border:"1px solid #1a3a1a",borderRadius:3,padding:"2px 8px",letterSpacing:1}}>
+                        S:{t.peaks.squat||"—"} B:{t.peaks.bench||"—"} D:{t.peaks.deadlift||"—"} kg · {Math.round((t.resetPct||0.8)*100)}% reset
+                      </span>
+                    )}
+                    {t.reason==="manual"&&<span style={{fontSize:9,color:"#4a4030",letterSpacing:1}}>manual</span>}
+                    {t.reason==="auto-stall"&&<span style={{fontSize:9,color:"#6a3030",letterSpacing:1}}>stalled</span>}
                   </div>
                 ))}
               </div>
             )}
           </div>
 
-          {/* Lift table */}
+          {/* Lift table — now with LOAD % column */}
           <div style={{background:"#111",border:"1px solid #1a1815",borderRadius:8,marginBottom:24,overflowX:"auto"}}>
-            <div style={{minWidth:620}}>
-              <div style={{display:"grid",gridTemplateColumns:"1.4fr 1fr 1fr 1fr 1fr 130px",padding:"11px 20px",fontSize:9,letterSpacing:3,color:"#3a3530",borderBottom:"1px solid #1a1815",background:"#0e0e0c"}}>
-                <span>LIFT</span><span style={{textAlign:"center"}}>LAST LOGGED</span><span style={{textAlign:"center"}}>THIS WEEK</span><span style={{textAlign:"center"}}>NEXT WEEK</span><span style={{textAlign:"center"}}>INCREMENT</span><span style={{textAlign:"center"}}>STATUS</span>
+            <div style={{minWidth:660}}>
+              <div style={{display:"grid",gridTemplateColumns:"1.4fr 1fr 1fr 1fr 1fr 90px 90px",padding:"11px 20px",fontSize:9,letterSpacing:3,color:"#3a3530",borderBottom:"1px solid #1a1815",background:"#0e0e0c"}}>
+                <span>LIFT</span>
+                <span style={{textAlign:"center"}}>LAST LOGGED</span>
+                <span style={{textAlign:"center"}}>THIS WEEK</span>
+                <span style={{textAlign:"center"}}>NEXT WEEK</span>
+                <span style={{textAlign:"center"}}>INCREMENT</span>
+                <span style={{textAlign:"center"}}>LOAD %</span>
+                <span style={{textAlign:"center"}}>STATUS</span>
               </div>
               {progData.map((lift,idx)=>{
                 const stallCount=phaseState.stallCounts[lift.id]||0,stallTriple=stallCount>=3||lift.stalledWeeks>=3;
+                const lp=lift.loadPct;
+                const lpColor=lp===null?"#3a3530":lp>=100?"#4a9a4a":lp>=85?"#c87820":"#9a4a4a";
+                const lpBg=lp===null?"transparent":lp>=100?"#0d1f0d":lp>=85?"#1a1208":"#1f0d0d";
                 return(
                   <div key={lift.id} style={{borderBottom:idx<progData.length-1?"1px solid #161410":"none"}}>
-                    <div style={{display:"grid",gridTemplateColumns:"1.4fr 1fr 1fr 1fr 1fr 130px",padding:"16px 20px",alignItems:"center",background:idx%2===0?"#111":"#0f0f0d"}}>
+                    <div style={{display:"grid",gridTemplateColumns:"1.4fr 1fr 1fr 1fr 1fr 90px 90px",padding:"16px 20px",alignItems:"center",background:idx%2===0?"#111":"#0f0f0d"}}>
                       <div>
                         <div style={{fontSize:14,color:"#fff",marginBottom:2}}>{lift.label}</div>
                         <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
@@ -1065,14 +1244,12 @@ function App(){
                         </div>
                         {!lift.hasData&&<div style={{fontSize:10,color:"#4a4540",marginTop:3}}>Log this lift to begin</div>}
                       </div>
-                      {/* Last logged — ISO week label */}
                       <div style={{textAlign:"center"}}>
                         {lift.lastLoggedWeight
                           ?<><div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,color:"#7a7570",letterSpacing:1,lineHeight:1}}>{lift.lastLoggedWeight}<span style={{fontSize:11,color:"#4a4540"}}> kg</span></div>
                             <div style={{fontSize:10,color:"#3a3530",marginTop:2}}>{lift.lastLoggedWeek}</div></>
                           :<span style={{color:"#2a2820"}}>—</span>}
                       </div>
-                      {/* This week */}
                       <div style={{textAlign:"center"}}>
                         {lift.prescribedWeight
                           ?<><div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:26,letterSpacing:1,lineHeight:1,color:lift.thisWeekActual?(lift.thisWeekActual>=lift.prescribedWeight?"#4a9a4a":"#e8c84a"):"#e8c84a"}}>{lift.prescribedWeight}<span style={{fontSize:12,color:"#5a5550"}}> kg</span></div>
@@ -1093,6 +1270,15 @@ function App(){
                             {[0.5,1,1.25,2,2.5,5].map(v=><option key={v} value={v}>{v}</option>)}
                           </select>
                         </div>
+                      </div>
+                      {/* Load % */}
+                      <div style={{textAlign:"center"}}>
+                        {lp!==null
+                          ?<div style={{background:lpBg,border:`1px solid ${lpColor}33`,borderRadius:4,padding:"6px 4px",display:"inline-block",minWidth:52}}>
+                              <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,color:lpColor,letterSpacing:1,lineHeight:1}}>{lp}%</div>
+                              <div style={{fontSize:9,color:lpColor,opacity:.7,marginTop:2}}>{lp>=100?"on target":lp>=85?"close":"below"}</div>
+                            </div>
+                          :<span style={{fontSize:11,color:"#2a2820"}}>—</span>}
                       </div>
                       <div style={{textAlign:"center"}}>
                         <div style={{display:"flex",flexDirection:"column",gap:5,alignItems:"center"}}>
@@ -1123,14 +1309,14 @@ function App(){
           {/* Set starting weight */}
           <div style={{background:"#111",border:"1px solid #1a1815",borderRadius:8,padding:20}}>
             <div style={{fontSize:10,letterSpacing:3,color:"#3a3530",marginBottom:4}}>SET STARTING WEIGHT</div>
-            <div style={{fontSize:11,color:"#4a4540",marginBottom:18}}>Override the starting point if you're picking up from an existing training weight.</div>
+            <div style={{fontSize:11,color:"#4a4540",marginBottom:18}}>Override the auto-calculated opening weight for any lift.</div>
             <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12}}>
               {progData.map(lift=>(
                 <div key={lift.id}>
                   <div style={{fontSize:10,color:"#5a5550",letterSpacing:1,marginBottom:8}}>{lift.label}</div>
                   <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                    <input type="number" placeholder={lift.startWeight?String(lift.startWeight):"kg"} step="1.25"
-                      onBlur={e=>{const v=parseFloat(e.target.value);if(!v)return;const nsw={...startWeights,[lift.id]:{weight:v,weekStart:isoWeek(toDateStr())}};setStartWeights(nsw);saveProg(nsw,progCfg);flash2(`Start weight set: ${lift.label}`);e.target.value=""}}
+                    <input type="number" placeholder={lift.startWeight?String(lift.startWeight):"kg"} step="0.5"
+                      onBlur={e=>{const v=parseFloat(e.target.value);if(!v)return;const nsw={...startWeights,[lift.id]:{weight:v,weekStart:isoWeek(todaySydney())}};setStartWeights(nsw);saveProg(nsw,progCfg);flash2(`Start weight set: ${lift.label}`);e.target.value=""}}
                       style={{width:"100%",background:"transparent",border:"1px solid #2a2820",borderRadius:4,color:"#e8e0d5",fontSize:14,padding:"8px 10px"}}/>
                     <span style={{fontSize:12,color:"#4a4540"}}>kg</span>
                   </div>
@@ -1149,7 +1335,6 @@ function App(){
         return<>
           <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.82)",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:"16px"}} onClick={()=>setDayModal(false)}>
           <div className="fade-in" onClick={e=>e.stopPropagation()} style={{background:"#161410",border:"1px solid #2a2820",borderRadius:8,width:"min(520px,100%)",display:"flex",flexDirection:"column",boxShadow:"0 24px 64px rgba(0,0,0,.95)",maxHeight:"90vh"}}>
-            {/* Header — fixed, never scrolls */}
             <div style={{padding:"20px 22px 16px",borderBottom:"1px solid #1a1815",flexShrink:0,display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
               <div>
                 <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:24,letterSpacing:2,color:"#e8c84a",lineHeight:1}}>START WORKOUT</div>
@@ -1157,7 +1342,6 @@ function App(){
               </div>
               <span onClick={()=>setDayModal(false)} style={{fontSize:26,color:"#5a5550",cursor:"pointer",padding:"2px 8px",lineHeight:1}}>×</span>
             </div>
-            {/* Day cards — scrollable area */}
             <div style={{overflowY:"auto",flex:1,padding:"14px 16px 20px",display:"flex",flexDirection:"column",gap:10}}>
               {tmpls.map(tmpl=>{
                 const alreadyLogged=entries.some(e=>e.date===formDate&&tmpl.exercises.some(ex=>ex.name===e.exercise));
@@ -1189,6 +1373,59 @@ function App(){
           onClose={()=>setGuided(null)}
         />
       )}
+
+      {/* ── Complete Phase Confirm Modal ── */}
+      {completeModal&&(()=>{
+        const fromId=phaseState.currentPhase;
+        const toId=fromId>=3?1:fromId+1;
+        const resetPct=PHASE_RESET_PCT[`${fromId}-${toId}`]||0.80;
+        const peaks=capturePeakWeights(fromId);
+        return<>
+          <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.88)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:"16px"}} onClick={()=>setCompleteModal(false)}>
+          <div className="fade-in" onClick={e=>e.stopPropagation()} style={{background:"#161410",border:"1px solid #2a5a2a",borderRadius:8,width:"min(480px,100%)",boxShadow:"0 24px 64px rgba(0,0,0,.95)"}}>
+            <div style={{padding:"22px 24px 18px",borderBottom:"1px solid #1a1815"}}>
+              <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:24,letterSpacing:2,color:"#e8c84a",lineHeight:1,marginBottom:4}}>COMPLETE PHASE {fromId}</div>
+              <div style={{fontSize:11,color:"#5a5550"}}>Peaks captured · Opening weights calculated at {Math.round(resetPct*100)}%</div>
+            </div>
+            <div style={{padding:"18px 24px"}}>
+              {DEFAULT_PROG.map(lift=>{
+                const peak=peaks[lift.id];
+                const reset=peak?Math.round(peak*resetPct*2)/2:null;
+                return(
+                  <div key={lift.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:"1px solid #161410"}}>
+                    <span style={{fontSize:12,color:"#8a8075"}}>{lift.label}</span>
+                    <div style={{textAlign:"right"}}>
+                      {peak
+                        ?<>
+                          <span style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:16,color:"#7a7570",letterSpacing:1}}>peak {peak} kg</span>
+                          <span style={{fontSize:11,color:"#3a3530",margin:"0 8px"}}>→</span>
+                          <span style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,color:"#e8c84a",letterSpacing:1}}>{reset} kg</span>
+                          <span style={{fontSize:10,color:"#4a4540"}}> opening</span>
+                        </>
+                        :<span style={{fontSize:11,color:"#3a3530"}}>no data — set manually</span>
+                      }
+                    </div>
+                  </div>
+                );
+              })}
+              <div style={{marginTop:18,fontSize:11,color:"#4a4540",lineHeight:1.6}}>
+                Phase {toId} ({PHASES[toId-1].name}) will start today. Prescribed weights reset from opening weight.
+              </div>
+            </div>
+            <div style={{padding:"16px 24px",borderTop:"1px solid #1a1815",display:"flex",gap:10}}>
+              <button onClick={()=>setCompleteModal(false)}
+                style={{background:"transparent",border:"1px solid #2a2820",color:"#5a5550",padding:"10px 20px",borderRadius:4,fontSize:11,cursor:"pointer",letterSpacing:1}}>
+                CANCEL
+              </button>
+              <button onClick={completePhase}
+                style={{flex:1,background:"#4a9a4a",border:"none",color:"#fff",padding:"11px",borderRadius:4,fontSize:11,letterSpacing:2,fontWeight:700,cursor:"pointer"}}>
+                CONFIRM — START PHASE {toId}
+              </button>
+            </div>
+          </div>
+          </div>
+        </>;
+      })()}
 
       {/* ── CSV Modal ── */}
       {csvModal&&<>
