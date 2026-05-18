@@ -34,7 +34,9 @@
     .stat-card{background:#111;border:1px solid #1e1c18;border-radius:8px;padding:18px 20px}
     .top-stat{background:#111;border:1px solid #1a1815;border-radius:8px;padding:20px}
     .phase-pill{border-radius:6px;padding:14px 16px;transition:all .15s}
-    .phase-pill-clickable{cursor:pointer}
+    .phase-pill-active{border-radius:6px;padding:14px 16px}
+    .phase-pill-locked{border-radius:6px;padding:14px 16px;opacity:.4;cursor:not-allowed!important}
+    .phase-pill-clickable{border-radius:6px;padding:14px 16px;cursor:pointer;transition:all .15s}
     .phase-pill-clickable:hover{border-color:#5a5540!important;background:#141210!important}
     .date-group-row{cursor:pointer;transition:background .15s}
     .date-group-row:hover{background:#161410!important}
@@ -81,11 +83,19 @@ const PHASES = [
   {id:3,name:"PEAK",       days:2,sets:5,reps:6,description:"2 days/week · 5×6 · Peak output"},
 ];
 
-// Reset % applied when COMPLETE PHASE is triggered — varies by transition pair
+// Reset % applied to opening weight when completing a phase
+// Key = "fromPhase-toPhase"
+
+// ── Strength goals ─────────────────────────────────────────────────────────
+const STRENGTH_GOALS = {
+  "Barbell Squat":  {goal:180, label:"Squat",    color:"#e8c84a"},
+  "Bench Press":    {goal:135, label:"Bench",     color:"#70c8e8"},
+  "Deadlift":       {goal:200, label:"Deadlift",  color:"#e87070"},
+};
 const PHASE_RESET_PCT = {
-  "1-2": 0.95,  // Phase 1→2: 95% — carry momentum
-  "2-3": 0.95,  // Phase 2→3: 95% — stay near peak
-  "3-1": 0.80,  // Phase 3→1: 80% — full macrocycle reset
+  "1-2": 0.95,  // carry momentum into Strength
+  "2-3": 0.95,  // carry momentum into Peak
+  "3-1": 0.80,  // full macrocycle reset
 };
 
 const PHASE_TEMPLATES = {
@@ -95,7 +105,7 @@ const PHASE_TEMPLATES = {
       {name:"Bench Press",   sets:5,reps:6,weightKey:"bench"},
       {name:"Lat Pulldown",  sets:5,reps:6},
     ]},
-    {day:2,label:"Day 2 — Hinge / Pull",exercises:[
+    {day:2,label:"Day 2 — Hinge / Pull / Press",exercises:[
       {name:"Deadlift",              sets:5,reps:6,weightKey:"deadlift"},
       {name:"Shrugs",                sets:5,reps:6},
       {name:"Pull-Ups",              sets:5,reps:6},
@@ -126,7 +136,7 @@ const PHASE_TEMPLATES = {
     ]},
   ],
   3:[
-    {day:1,label:"Day 1 — Squat / Push / Pull",exercises:[
+    {day:1,label:"Day 1 — Squat / Upper / Core",exercises:[
       {name:"Barbell Squat", sets:5,reps:6,weightKey:"squat"},
       {name:"Dips",          sets:5,reps:6},
       {name:"Pull-Ups",      sets:5,reps:6},
@@ -134,7 +144,7 @@ const PHASE_TEMPLATES = {
       {name:"Calf Raises",   sets:4,reps:15},
       {name:"Crunches",      sets:3,reps:15},
     ]},
-    {day:2,label:"Day 2 — Deadlift / Press",exercises:[
+    {day:2,label:"Day 2 — Deadlift / Press / Core",exercises:[
       {name:"Deadlift",              sets:5,reps:6,weightKey:"deadlift"},
       {name:"Bench Press",           sets:5,reps:6,weightKey:"bench"},
       {name:"Lat Pulldown",          sets:5,reps:6},
@@ -155,25 +165,49 @@ const DEFAULT_PHASE = {
   phaseStartDate:null,
   transitions:[],
   stallCounts:{squat:0,bench:0,deadlift:0},
-  peakWeights:{},   // {phaseId: {squat:x, bench:x, deadlift:x}} captured at COMPLETE PHASE
+  peakWeights:{},  // {phaseId: {squat:w, bench:w, deadlift:w}}
 };
 
-// ── Timezone: Sydney/Australia ────────────────────────────────────────────────
-// Always derive "today" in AEST/AEDT (UTC+10 / UTC+11)
-function todaySydney(){
-  return new Date().toLocaleDateString("en-CA",{timeZone:"Australia/Sydney"}); // returns YYYY-MM-DD
-}
+// ── Date / week helpers (Sydney timezone) ────────────────────────────────────
+const SYD_TZ = "Australia/Sydney";
 
-// ── Date / week helpers ───────────────────────────────────────────────────────
-function toDateStr(d=new Date()){
-  return d.toLocaleDateString("en-CA",{timeZone:"Australia/Sydney"});
+function todaySyd(){
+  // Returns current date string YYYY-MM-DD in Sydney time
+  return new Date().toLocaleDateString("en-CA",{timeZone:SYD_TZ});
 }
-function fmtDate(s){if(!s)return"";return new Date(s+"T00:00:00").toLocaleDateString("en-AU",{day:"numeric",month:"short",year:"numeric"})}
-function fmtDateShort(s){if(!s)return"";return new Date(s+"T00:00:00").toLocaleDateString("en-AU",{day:"numeric",month:"short"})}
-function fmtDow(s){if(!s)return"";return new Date(s+"T00:00:00").toLocaleDateString("en-AU",{weekday:"long"})}
-function monStart(s){const d=new Date(s+"T00:00:00"),dy=d.getDay();d.setDate(d.getDate()-dy+(dy===0?-6:1));return d.toLocaleDateString("en-CA")}
-function weekEnd(ws){const d=new Date(ws+"T00:00:00");d.setDate(d.getDate()+6);return d.toLocaleDateString("en-CA")}
-function weeksBetween(a,b){return Math.floor((new Date(b+"T00:00:00")-new Date(a+"T00:00:00"))/(7*24*60*60*1e3))}
+function toDateStr(d=new Date()){
+  return d.toLocaleDateString("en-CA",{timeZone:SYD_TZ});
+}
+function fmtDate(s){
+  if(!s)return"";
+  return new Date(s+"T00:00:00").toLocaleDateString("en-AU",{day:"numeric",month:"short",year:"numeric"});
+}
+function fmtDateShort(s){
+  if(!s)return"";
+  return new Date(s+"T00:00:00").toLocaleDateString("en-AU",{day:"numeric",month:"short"});
+}
+function fmtDow(s){
+  if(!s)return"";
+  return new Date(s+"T00:00:00").toLocaleDateString("en-AU",{weekday:"long"});
+}
+function monStart(s){
+  const d=new Date(s+"T00:00:00"),dy=d.getDay();
+  d.setDate(d.getDate()-dy+(dy===0?-6:1));
+  return d.toLocaleDateString("en-CA");
+}
+function weekEnd(ws){
+  const d=new Date(ws+"T00:00:00");
+  d.setDate(d.getDate()+6);
+  return d.toLocaleDateString("en-CA");
+}
+function weeksBetween(a,b){
+  return Math.floor((new Date(b+"T00:00:00")-new Date(a+"T00:00:00"))/(7*24*60*60*1e3));
+}
+function addDays(dateStr,n){
+  const d=new Date(dateStr+"T00:00:00");
+  d.setDate(d.getDate()+n);
+  return d.toLocaleDateString("en-CA");
+}
 function pct(a,b){return(!b||b===0)?null:Math.round(((a-b)/b)*100)}
 
 // ISO 8601 week label e.g. "2026-W11"
@@ -184,17 +218,23 @@ function isoWeek(dateStr){
   const w=1+Math.round((thu-jan4)/6048e5);
   return thu.getFullYear()+"-W"+(w<10?"0":"")+w;
 }
-// Short display e.g. "W11 2026"
 function isoWeekShort(dateStr){
+  // Returns e.g. "W11 2026"
   const full=isoWeek(dateStr);
   const [yr,wk]=full.split("-");
   return wk+" "+yr;
 }
-// Advance one ISO week
+// Next ISO week label
 function nextIsoWeek(wkLabel){
   const y=parseInt(wkLabel.slice(0,4)),w=parseInt(wkLabel.slice(6));
   const nw=w>=52?1:w+1,ny=w>=52?y+1:y;
   return ny+"-W"+(nw<10?"0":"")+nw;
+}
+// Weeks elapsed between two ISO week labels
+function isoWeeksBetween(wkA,wkB){
+  let cnt=0,cur=wkA;
+  while(cur<wkB){cur=nextIsoWeek(cur);cnt++;}
+  return cnt;
 }
 
 function DeltaBadge({val,unit=""}){
@@ -277,8 +317,8 @@ function GuidedWorkout({template,progData,formDate,entries,onSave,onClose}){
     });
   },[exIdx]);
 
-  const ex   = template.exercises[exIdx];
-  const rows = allRows[exIdx];
+  const ex=template.exercises[exIdx];
+  const rows=allRows[exIdx];
 
   function updRow(si,field,val){
     setAllRows(prev=>{
@@ -411,7 +451,7 @@ function GuidedWorkout({template,progData,formDate,entries,onSave,onClose}){
                   {row.done
                     ?<div style={{textAlign:"center"}}>
                         <div style={{fontSize:12,color:"#4a9a4a"}}>✓</div>
-                        {row.restSec&&<div style={{fontSize:9,color:"#3a5a3a",marginTop:1}}>{row.restSec}s</div>}
+                        {row.restSec&&<div style={{fontSize:9,color:"#3a5a3a",marginTop:1}}>{row.restSec}s rest</div>}
                       </div>
                     :<button onClick={()=>logSet(si)}
                         style={{background:"#1a2a1a",border:"1px solid #2a5a2a",color:"#70c870",borderRadius:4,padding:"7px 0",fontSize:10,cursor:"pointer",width:"100%",letterSpacing:1}}>
@@ -510,12 +550,59 @@ function DayCard({tmpl,alreadyLogged,tmplWeight,onStart}){
   );
 }
 
+// ── Complete Phase Confirmation Modal ─────────────────────────────────────────
+function CompletePhaseModal({curPhase,nextPhase,peakWeights,resetPct,weeksInPhase,onConfirm,onClose}){
+  const pct=Math.round(resetPct*100);
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.88)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:"16px"}} onClick={onClose}>
+      <div className="fade-in" onClick={e=>e.stopPropagation()} style={{background:"#161410",border:"1px solid #3a3020",borderRadius:10,width:"min(480px,100%)",boxShadow:"0 24px 64px rgba(0,0,0,.95)"}}>
+        <div style={{padding:"22px 24px 18px",borderBottom:"1px solid #1a1815"}}>
+          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:26,color:"#e8c84a",letterSpacing:2,lineHeight:1}}>COMPLETE PHASE {curPhase.id}</div>
+          <div style={{fontSize:11,color:"#5a5550",marginTop:5}}>This will lock Phase {curPhase.id} and open Phase {nextPhase.id}: {nextPhase.name}</div>
+        </div>
+        <div style={{padding:"18px 24px"}}>
+          <div style={{fontSize:10,letterSpacing:3,color:"#3a3530",marginBottom:12}}>OPENING WEIGHTS FOR PHASE {nextPhase.id} ({pct}% RESET)</div>
+          {DEFAULT_PROG.map(lift=>{
+            const peak=peakWeights[lift.id];
+            const opening=peak?Math.round(peak*resetPct*2)/2:null;
+            return(
+              <div key={lift.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:"1px solid #161410"}}>
+                <span style={{fontSize:13,color:"#c8c0b5"}}>{lift.label}</span>
+                <div style={{textAlign:"right"}}>
+                  {peak
+                    ?<>
+                      <span style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,color:"#e8c84a",letterSpacing:1}}>{opening} kg</span>
+                      <span style={{fontSize:10,color:"#4a4540",marginLeft:8}}>peak {peak} kg</span>
+                    </>
+                    :<span style={{fontSize:11,color:"#4a4540"}}>no data — set manually</span>
+                  }
+                </div>
+              </div>
+            );
+          })}
+          <div style={{marginTop:16,padding:"12px 14px",background:"#0e0e0c",borderRadius:6,border:"1px solid #1a1815",fontSize:11,color:"#6a6560",lineHeight:1.6}}>
+            Phase {curPhase.id} ran for <strong style={{color:"#9a9080"}}>{weeksInPhase} weeks</strong>. Peak weights above are the highest working sets logged since phase start. Opening weights for Phase {nextPhase.id} are set at {pct}% of peak.
+          </div>
+        </div>
+        <div style={{padding:"14px 24px 22px",display:"flex",gap:10}}>
+          <button onClick={onClose} style={{background:"transparent",border:"1px solid #2a2820",color:"#5a5550",padding:"11px 20px",borderRadius:4,fontSize:11,cursor:"pointer",letterSpacing:1}}>CANCEL</button>
+          <button onClick={onConfirm}
+            style={{flex:1,background:"#4a9a4a",border:"none",color:"#fff",padding:"12px",borderRadius:4,fontSize:11,letterSpacing:2,fontWeight:700,cursor:"pointer"}}>
+            CONFIRM — START PHASE {nextPhase.id} →
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main App ──────────────────────────────────────────────────────────────────
 function App(){
   const [entries,      setEntries]      = useState([]);
   const [view,         setView]         = useState("log");
   const [form,         setForm]         = useState({exercise:"",sets:"",reps:"",weight:"",notes:"",pr:false});
-  const [formDate,     setFormDate]     = useState(todaySydney());
+  const [formSets,     setFormSets]     = useState([]); // individual set rows [{reps,weight}]
+  const [formDate,     setFormDate]     = useState(todaySyd());
   const [editingId,    setEditingId]    = useState(null);
   const [loaded,       setLoaded]       = useState(false);
   const [flash,        setFlash]        = useState(null);
@@ -524,6 +611,9 @@ function App(){
   const [customMode,   setCustomMode]   = useState(false);
   const [expandedDate, setExpandedDate] = useState(null);
   const [csvModal,     setCsvModal]     = useState(false);
+  const [obsModal,     setObsModal]     = useState(false);
+  const [obsContent,   setObsContent]   = useState("");
+  const [obsWeek,      setObsWeek]      = useState("");
   const [csvContent,   setCsvContent]   = useState("");
   const [progCfg,      setProgCfg]      = useState(DEFAULT_PROG);
   const [startWeights, setStartWeights] = useState({});
@@ -531,11 +621,11 @@ function App(){
   const [dayModal,     setDayModal]     = useState(false);
   const [guided,       setGuided]       = useState(null);
   const [cardio,       setCardio]       = useState({});
-  const [completeModal,setCompleteModal]= useState(false); // confirm complete phase
+  const [completeModal,setCompleteModal]= useState(false);
 
-  const dropRef = useRef(null);
-  const inpRef  = useRef(null);
-  const cusRef  = useRef(null);
+  const dropRef=useRef(null);
+  const inpRef =useRef(null);
+  const cusRef =useRef(null);
 
   useEffect(()=>{
     const h=e=>{if(dropRef.current&&!dropRef.current.contains(e.target))setShowDrop(false)};
@@ -555,92 +645,68 @@ function App(){
   const savePhase=ps=>LS.set(KEYS.phase,ps);
   const saveCardio=c=>LS.set(KEYS.cardio,c);
 
-  function flash2(msg,type="success"){setFlash({msg,type});setTimeout(()=>setFlash(null),2800)}
+  function flash2(msg,type="success"){setFlash({msg,type});setTimeout(()=>setFlash(null),2400)}
 
-  // ── Phase transition helpers ──────────────────────────────────────────────
-  const MIN_PHASE_WEEKS = 5;
-
-  function weeksInCurrentPhase(){
-    if(!phaseState.phaseStartDate)return 0;
-    return weeksBetween(phaseState.phaseStartDate, todaySydney());
-  }
-
-  function canAdvancePhase(toId){
-    // Only block forward transitions
-    if(toId<=phaseState.currentPhase)return true;
-    return weeksInCurrentPhase()>=MIN_PHASE_WEEKS;
-  }
-
-  function weeksUntilEligible(){
-    return Math.max(0, MIN_PHASE_WEEKS - weeksInCurrentPhase());
-  }
-
-  // Capture highest working weight per lift since phaseStartDate
-  function capturePeakWeights(fromPhaseId){
-    const start=phaseState.phaseStartDate;
+  // ── Phase peak weights for each lift (phase-wide max, working sets only) ──
+  function calcPeakWeights(forPhaseId){
+    const ps=phaseState;
+    const startDate=ps.phaseStartDate;
+    if(!startDate)return{};
     const peaks={};
     DEFAULT_PROG.forEach(lift=>{
-      const relevant=entries.filter(e=>
-        e.exercise.toLowerCase()===lift.label.toLowerCase()&&
-        !e.warmup&&
-        (!start||e.date>=start)
-      );
-      if(relevant.length){
-        peaks[lift.id]=Math.max(...relevant.map(e=>parseFloat(e.weight)||0));
-      }
+      const liftName=lift.label.toLowerCase();
+      let max=0;
+      entries.forEach(e=>{
+        if(e.exercise.toLowerCase()!==liftName||e.warmup)return;
+        if(e.date<startDate)return;
+        const w=parseFloat(e.weight)||0;
+        if(w>max)max=w;
+      });
+      if(max>0)peaks[lift.id]=max;
     });
     return peaks;
   }
 
-  // Complete phase: capture peaks, calculate reset weights, switch phase
-  function completePhase(){
+  // ── Complete phase: capture peaks, compute 80% opening, transition ─────────
+  function confirmCompletePhase(){
     const fromId=phaseState.currentPhase;
-    // Next phase: wraps 3→1
-    const toId=fromId>=3?1:fromId+1;
+    const toId=fromId===3?1:fromId+1;
+    const peaks=calcPeakWeights(fromId);
     const resetPct=PHASE_RESET_PCT[`${fromId}-${toId}`]||0.80;
-    const peaks=capturePeakWeights(fromId);
-    const now=todaySydney();
+    const now=todaySyd();
     const nowWk=isoWeek(now);
 
-    // Set start weights for next phase at resetPct of peak, rounded to 0.5kg
-    const newSW={...startWeights};
+    // Write new start weights at reset %
+    const nsw={...startWeights};
     DEFAULT_PROG.forEach(lift=>{
-      if(peaks[lift.id]){
-        const reset=Math.round(peaks[lift.id]*resetPct*2)/2;
-        newSW[lift.id]={weight:reset,weekStart:nowWk};
+      const peak=peaks[lift.id];
+      if(peak){
+        const opening=Math.round(peak*resetPct*2)/2;
+        nsw[lift.id]={weight:opening,weekStart:nowWk};
       }
     });
+    setStartWeights(nsw);
+    saveProg(nsw,progCfg);
 
+    // Transition phase
     const ps={
       ...phaseState,
       currentPhase:toId,
       phaseStartDate:now,
-      transitions:[...phaseState.transitions,{
-        from:fromId,to:toId,date:now,
-        isoWeek:nowWk,
-        reason:"complete",
-        peaks,
-        resetPct,
-      }],
+      transitions:[...phaseState.transitions,{from:fromId,to:toId,date:now,reason:"completed",peaks}],
       stallCounts:{squat:0,bench:0,deadlift:0},
-      peakWeights:{...(phaseState.peakWeights||{}),[fromId]:peaks},
+      peakWeights:{...phaseState.peakWeights,[fromId]:peaks},
     };
-
     setPhaseState(ps);savePhase(ps);
-    setStartWeights(newSW);saveProg(newSW,progCfg);
     setCompleteModal(false);
-    flash2(`Phase ${fromId} complete → Phase ${toId} starts. Reset weights calculated.`);
+    flash2(`Phase ${fromId} complete → Phase ${toId}: ${PHASES[toId-1].name} begins`);
   }
 
-  // Manual phase switch (no peak capture, no 5-week check for backwards moves)
-  function switchPhase(toId,reason="manual"){
-    if(!canAdvancePhase(toId)){
-      flash2(`${weeksUntilEligible()} more week${weeksUntilEligible()!==1?"s":""} needed before advancing`,"error");
-      return;
-    }
-    const now=todaySydney();
+  // ── Manual phase switch (backward or same-phase reset — no lock) ───────────
+  function switchPhaseManual(toId){
+    const now=todaySyd();
     const ps={...phaseState,currentPhase:toId,phaseStartDate:now,
-      transitions:[...phaseState.transitions,{from:phaseState.currentPhase,to:toId,date:now,isoWeek:isoWeek(now),reason}],
+      transitions:[...phaseState.transitions,{from:phaseState.currentPhase,to:toId,date:now,reason:"manual"}],
       stallCounts:{squat:0,bench:0,deadlift:0}};
     setPhaseState(ps);savePhase(ps);
     flash2(`Switched to Phase ${toId}: ${PHASES[toId-1].name}`);
@@ -667,15 +733,35 @@ function App(){
   }
   function addOrUpdate(){
     if(!form.exercise.trim())return;
-    const id=editingId||Date.now().toString();
-    const entry={id,date:formDate,exercise:form.exercise.trim(),sets:form.sets,reps:form.reps,
-      weight:form.weight,notes:form.notes,pr:form.pr,
-      warmup:false,setNumber:null,restAfterSec:null,
-      timestamp:editingId?(entries.find(e=>e.id===editingId)?.timestamp||new Date().toISOString()):new Date().toISOString()};
-    const ne=editingId?entries.map(e=>e.id===editingId?entry:e):[...entries,entry];
+    const base=Date.now();
+    let newEntries=[];
+    if(formSets.length>0){
+      // Save individual set rows
+      formSets.forEach((s,i)=>{
+        if(!s.reps&&!s.weight)return;
+        newEntries.push({
+          id:String(base+i),date:formDate,exercise:form.exercise.trim(),
+          sets:"1",reps:s.reps||"0",weight:s.weight||"0",
+          notes:i===0?form.notes:"",pr:i===0?form.pr:false,
+          warmup:false,setNumber:i+1,restAfterSec:null,
+          timestamp:new Date(base+i).toISOString()
+        });
+      });
+    } else {
+      // Legacy single-row entry
+      newEntries=[{id:String(base),date:formDate,exercise:form.exercise.trim(),
+        sets:form.sets,reps:form.reps,weight:form.weight,
+        notes:form.notes,pr:form.pr,
+        warmup:false,setNumber:null,restAfterSec:null,
+        timestamp:editingId?(entries.find(e=>e.id===editingId)?.timestamp||new Date().toISOString()):new Date().toISOString()}];
+    }
+    const ne=editingId
+      ?entries.map(e=>e.id===editingId?newEntries[0]:e)
+      :[...entries,...newEntries];
     setEntries(ne);saveEntries(ne);
     setForm({exercise:"",sets:"",reps:"",weight:"",notes:"",pr:false});
-    setFormDate(todaySydney());setEditingId(null);setCustomMode(false);
+    setFormSets([]);
+    setFormDate(todaySyd());setEditingId(null);setCustomMode(false);
     flash2(editingId?"Updated!":"Logged!");
   }
   function deleteEntry(id){const ne=entries.filter(e=>e.id!==id);setEntries(ne);saveEntries(ne);flash2("Removed.","error")}
@@ -685,33 +771,147 @@ function App(){
     window.scrollTo({top:0,behavior:"smooth"});
   }
 
+  function generateObsidian(weekMonStart){
+    // Find all entries in this week
+    const we=weekEnd(weekMonStart);
+    const wkEntries=entries.filter(e=>e.date>=weekMonStart&&e.date<=we)
+      .sort((a,b)=>a.date.localeCompare(b.date)||a.timestamp.localeCompare(b.timestamp));
+    if(!wkEntries.length){flash2("No entries this week.","error");return}
+
+    const wkLabel=isoWeek(weekMonStart); // e.g. 2026-W11
+    const wkNum=wkLabel.split("-")[1];   // e.g. W11
+    const yr=wkLabel.split("-")[0];
+
+    // Week-of readable date
+    const wkOfDate=new Date(weekMonStart+"T00:00:00");
+    const months=["January","February","March","April","May","June","July","August","September","October","November","December"];
+    const weekOfStr=`${months[wkOfDate.getMonth()]} ${wkOfDate.getDate()}, ${wkOfDate.getFullYear()}`;
+
+    // Group by date — only dates with actual entries
+    const dateMap={};
+    wkEntries.forEach(e=>{if(!dateMap[e.date])dateMap[e.date]=[];dateMap[e.date].push(e)});
+    const dates=Object.keys(dateMap).sort();
+
+    let md=`# Weekly Workout — ${yr}-${wkNum}
+`;
+    md+=`**Week of:** ${weekOfStr}
+
+---
+`;
+
+    dates.forEach((date,di)=>{
+      const list=dateMap[date];
+      const dow=fmtDow(date);
+      md+=`
+## Day ${di+1} — ${dow}, ${date}
+
+`;
+      md+=`| Exercise | Set # | Warm-up | Reps | Weight (kg) | Rest (sec) | PR | Notes |
+`;
+      md+=`|---|---|---|---|---|---|---|---|
+`;
+
+      // Group by exercise preserving order
+      const exOrder=[];
+      const exMap={};
+      list.forEach(e=>{
+        if(!exMap[e.exercise]){exMap[e.exercise]=[];exOrder.push(e.exercise)}
+        exMap[e.exercise].push(e);
+      });
+      exOrder.forEach(exName=>{
+        exMap[exName].sort((a,b)=>(a.setNumber||0)-(b.setNumber||0)).forEach(e=>{
+          const wu=e.warmup?"Yes":"No";
+          const pr=e.pr?"🏆":"";
+          const notes=(e.notes||"").replace(/\|/g,"\|");
+          md+=`| ${exName} | ${e.setNumber||""} | ${wu} | ${e.reps} | ${e.weight} | ${e.restAfterSec||""} | ${pr} | ${notes} |
+`;
+        });
+      });
+
+      md+=`
+**Cardio:** ${cardio[date]?"✅ Completed":"—"}
+`;
+      md+=`**Notes:** 
+
+---
+`;
+    });
+
+    // Week-end analysis
+    const prs=wkEntries.filter(e=>e.pr);
+    const activeDays=dates.length;
+    md+=`
+## Week-end Analysis
+
+`;
+    md+=`**PRs this week:** ${prs.length>0?prs.map(e=>`${e.exercise} (${e.weight}kg)`).join(", "):"—"}
+`;
+    md+=`**Total sessions:** ${activeDays}
+`;
+    md+=`**Observations:** 
+`;
+
+    setObsContent(md);
+    setObsWeek(`${yr}-${wkNum}`);
+    setObsModal(true);
+  }
+
   function exportCSV(){
     if(!entries.length){flash2("Nothing to export.","error");return}
-    const hdr=["ISO Week","Date","Day of Week","Phase","Exercise","Set #","Warm-up","Reps","Weight (kg)","Rest After (sec)","PR","Cardio","Notes"];
-    const rows=[...entries].sort((a,b)=>a.date.localeCompare(b.date)||a.timestamp.localeCompare(b.timestamp))
+    const hdr=["ISO Week","Date","Day of Week","Phase","Week in Phase","Exercise","Set #","Warm-up","Reps","Weight (kg)","Load %","Rest After (sec)","PR","Cardio","Notes"];
+
+    // Build a phase-date map so we know which phase was active on each date
+    function phaseOnDate(dateStr){
+      // Walk transitions to find which phase was active
+      let ph=1;
+      if(phaseState.phaseStartDate){
+        // Start with earliest known
+        const sorted=[...phaseState.transitions].sort((a,b)=>a.date.localeCompare(b.date));
+        sorted.forEach(t=>{if(t.date<=dateStr)ph=t.to});
+        // If date is before first transition, use currentPhase at start
+        if(sorted.length&&dateStr<sorted[0].date)ph=sorted[0].from;
+      } else ph=phaseState.currentPhase;
+      return ph;
+    }
+    function weekInPhase(dateStr){
+      // Find phaseStartDate applicable on this date
+      const sorted=[...phaseState.transitions].sort((a,b)=>a.date.localeCompare(b.date));
+      let psd=phaseState.phaseStartDate||dateStr;
+      // Find the most recent transition before or on dateStr
+      for(let i=sorted.length-1;i>=0;i--){
+        if(sorted[i].date<=dateStr){psd=sorted[i].date;break}
+      }
+      return weeksBetween(psd,dateStr)+1;
+    }
+
+    // Build progData snapshot for load % (prescribed weight per lift per week)
+    const progSnap={};
+    progData.forEach(lift=>{
+      if(lift.prescribedWeight)progSnap[lift.id]={prescribed:lift.prescribedWeight,label:lift.label.toLowerCase()};
+    });
+
+    const rows=[...entries]
+      .sort((a,b)=>a.date.localeCompare(b.date)||a.timestamp.localeCompare(b.timestamp))
       .map(e=>{
-        // determine phase on this date
-        const phaseOnDate=getPhaseOnDate(e.date);
-        return[isoWeek(e.date),e.date,fmtDow(e.date),phaseOnDate?`Phase ${phaseOnDate}`:"",
+        const ph=phaseOnDate(e.date);
+        const wip=weekInPhase(e.date);
+        // Load % — only for the 3 tracked lifts
+        let loadPct="";
+        const matchedLift=DEFAULT_PROG.find(l=>l.label.toLowerCase()===e.exercise.toLowerCase());
+        if(matchedLift&&progSnap[matchedLift.id]){
+          const pw=progSnap[matchedLift.id].prescribed;
+          const aw=parseFloat(e.weight)||0;
+          if(pw&&aw)loadPct=Math.round((aw/pw)*100)+"%";
+        }
+        return[isoWeek(e.date),e.date,fmtDow(e.date),`Phase ${ph}`,wip,
           `"${e.exercise.replace(/"/g,'""')}"`,
           e.setNumber||"",e.warmup?"Yes":"No",e.reps,e.weight,
-          e.restAfterSec||"",e.pr?"Yes":"No",cardio[e.date]?"Yes":"No",
+          loadPct,e.restAfterSec||"",e.pr?"Yes":"No",
+          cardio[e.date]?"Yes":"No",
           `"${(e.notes||"").replace(/"/g,'""')}"`];
       });
     setCsvContent([hdr,...rows].map(r=>r.join(",")).join("\n"));
     setCsvModal(true);
-  }
-
-  // Determine which phase was active on a given date
-  function getPhaseOnDate(date){
-    const sorted=[...phaseState.transitions].sort((a,b)=>a.date.localeCompare(b.date));
-    let phase=phaseState.transitions.length?null:phaseState.currentPhase;
-    // find the transition that was active on this date
-    for(let i=0;i<sorted.length;i++){
-      if(date<sorted[i].date){phase=i===0?null:sorted[i-1].to;break;}
-      if(i===sorted.length-1)phase=sorted[i].to;
-    }
-    return phase||phaseState.currentPhase;
   }
 
   // ── Stats ─────────────────────────────────────────────────────────────────
@@ -735,9 +935,10 @@ function App(){
     return wts.length?Math.max(...wts):null;
   }
 
-  // ── Progression ───────────────────────────────────────────────────────────
+  // ── Progression ────────────────────────────────────────────────────────────
   function getProgData(){
-    const todayW=isoWeek(todaySydney());
+    const today=todaySyd();
+    const todayW=isoWeek(today);
     return progCfg.map(lift=>{
       const liftName=lift.label.toLowerCase();
       const weekMap={};
@@ -752,20 +953,18 @@ function App(){
       if(!sw&&sorted.length){sw=weekMap[sorted[0]];swk=sorted[0]}
       let prescribed=null;
       if(sw&&swk){
-        let cnt=0,cur=swk;
-        while(cur<todayW){cur=nextIsoWeek(cur);cnt++;}
+        const cnt=isoWeeksBetween(swk,todayW);
         prescribed=+(sw+cnt*lift.increment).toFixed(2);
       }
       const next=prescribed!==null?+(prescribed+lift.increment).toFixed(2):null;
       const rec=sorted.slice(-3),recW=rec.map(k=>weekMap[k]);
       const stalled=recW.length>=2&&recW.every(w=>w===recW[0]);
       const lastWk=sorted.length?sorted[sorted.length-1]:null;
-      const thisWeekActual=weekMap[todayW]||null;
-      // Load %: actual this week vs prescribed
-      const loadPct=(thisWeekActual&&prescribed&&prescribed>0)
-        ?Math.round((thisWeekActual/prescribed)*100):null;
+      // Load % for this week
+      const actual=weekMap[todayW]||null;
+      const loadPct=(actual&&prescribed)?Math.round((actual/prescribed)*100):null;
       return{...lift,prescribedWeight:prescribed,nextWeight:next,
-        thisWeekActual,loadPct,
+        thisWeekActual:actual,loadPct,
         lastLoggedWeek:lastWk,lastLoggedWeight:lastWk?weekMap[lastWk]:null,
         stalled,stalledWeeks:stalled?recW.length:0,
         history:sorted.slice(-8).map(wk=>({wk,weight:weekMap[wk]})),
@@ -775,35 +974,35 @@ function App(){
 
   function tmplWeight(weightKey,mult){
     if(!weightKey)return"";
-    const m=mult||1;
     const lift=progData.find(l=>l.id===weightKey);
     if(!lift)return"";
     const base=lift.prescribedWeight||lift.lastLoggedWeight;
     if(!base)return"";
-    return String(Math.round(base*m*2)/2);
+    return String(Math.round(base*(mult||1)*2)/2);
   }
 
   // ── Derived ───────────────────────────────────────────────────────────────
-  const today         = todaySydney();
-  const thisMonStart  = monStart(today);
-  const thisWeekEnd   = weekEnd(thisMonStart);
-  const todayIsoWk    = isoWeek(today);
-  const todayEntries  = entries.filter(e=>e.date===formDate).sort((a,b)=>a.timestamp.localeCompare(b.timestamp));
-  const byDate        = (()=>{const m={};entries.forEach(e=>{if(!m[e.date])m[e.date]=[];m[e.date].push(e)});return Object.keys(m).sort().reverse().map(d=>({date:d,list:m[d]}))})();
-  const loggedExes    = [...new Set(entries.filter(e=>!e.warmup).map(e=>e.exercise))];
-  const allMonStarts  = [...new Set(entries.map(e=>monStart(e.date)))].sort();
-  const thisWkIdx     = allMonStarts.indexOf(thisMonStart);
-  const lastMonStart  = thisWkIdx>0?allMonStarts[thisWkIdx-1]:null;
-  const curStat       = weekStats(thisMonStart);
-  const prevStat      = lastMonStart?weekStats(lastMonStart):null;
-  const progData      = getProgData();
-  const weeksInPhase  = phaseState.phaseStartDate?weeksBetween(phaseState.phaseStartDate,today):0;
-  const curPhaseObj   = PHASES.find(p=>p.id===phaseState.currentPhase)||PHASES[0];
-  const nextPhaseId   = phaseState.currentPhase>=3?1:phaseState.currentPhase+1;
-  const nextPhaseObj  = PHASES.find(p=>p.id===nextPhaseId)||PHASES[0];
-  const allStalled    = progData.every(l=>l.stalled||(phaseState.stallCounts[l.id]||0)>=3);
-  const eligible      = weeksInPhase>=MIN_PHASE_WEEKS;
-  const weeksLeft     = weeksUntilEligible();
+  const today        = todaySyd();
+  const thisMonStart = monStart(today);
+  const thisWeekEnd  = weekEnd(thisMonStart);
+  const todayIsoWk   = isoWeek(today);
+  const todayEntries = entries.filter(e=>e.date===formDate).sort((a,b)=>a.timestamp.localeCompare(b.timestamp));
+  const byDate       = (()=>{const m={};entries.forEach(e=>{if(!m[e.date])m[e.date]=[];m[e.date].push(e)});return Object.keys(m).sort().reverse().map(d=>({date:d,list:m[d]}))})();
+  const loggedExes   = [...new Set(entries.filter(e=>!e.warmup).map(e=>e.exercise))];
+  const allMonStarts = [...new Set(entries.map(e=>monStart(e.date)))].sort();
+  const thisWkIdx    = allMonStarts.indexOf(thisMonStart);
+  const lastMonStart = thisWkIdx>0?allMonStarts[thisWkIdx-1]:null;
+  const curStat      = weekStats(thisMonStart);
+  const prevStat     = lastMonStart?weekStats(lastMonStart):null;
+  const progData     = getProgData();
+  const weeksInPhase = phaseState.phaseStartDate?weeksBetween(phaseState.phaseStartDate,today):0;
+  const curPhaseObj  = PHASES.find(p=>p.id===phaseState.currentPhase)||PHASES[0];
+  const nextPhaseId  = phaseState.currentPhase===3?1:phaseState.currentPhase+1;
+  const nextPhaseObj = PHASES.find(p=>p.id===nextPhaseId);
+  const allStalled   = progData.every(l=>l.stalled||(phaseState.stallCounts[l.id]||0)>=3);
+  const canComplete  = weeksInPhase>=5;
+  const peakWeightsNow = calcPeakWeights(phaseState.currentPhase);
+  const resetPct     = PHASE_RESET_PCT[`${phaseState.currentPhase}-${nextPhaseId}`]||0.80;
 
   if(!loaded)return<div style={{background:"#0a0a0a",minHeight:"100vh",color:"#e8c84a",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Bebas Neue',sans-serif",fontSize:24,letterSpacing:4}}>LOADING...</div>;
 
@@ -869,6 +1068,7 @@ function App(){
             </div>
             <div style={{borderTop:"1px solid #1a1815",marginBottom:20}}/>
             <div style={{fontSize:10,letterSpacing:3,color:"#3a3530",marginBottom:18}}>{editingId?"EDIT EXERCISE":"EXERCISE"}</div>
+
             <div style={{marginBottom:18}}>
               <div style={{display:"flex",gap:10,marginBottom:10}}>
                 {[["FROM LIST",false],["CUSTOM",true]].map(([lbl,cm])=>(
@@ -920,6 +1120,7 @@ function App(){
                 </div>
               }
             </div>
+
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14,marginBottom:16}}>
               {[{l:"SETS",k:"sets",p:"5"},{l:"REPS",k:"reps",p:"5"},{l:"WEIGHT (KG)",k:"weight",p:"80"}].map(({l,k,p})=>(
                 <div key={k}>
@@ -931,6 +1132,47 @@ function App(){
             </div>
             <textarea value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} placeholder="Notes — how it felt, form cues..." rows={2}
               style={{width:"100%",background:"transparent",border:"1px solid #2a2820",borderRadius:4,color:"#e8e0d5",fontSize:12,padding:"9px 12px",resize:"vertical",marginBottom:18}}/>
+
+            {/* Individual set builder */}
+            <div style={{marginBottom:18}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                <div style={{fontSize:9,letterSpacing:3,color:"#3a3530"}}>INDIVIDUAL SETS <span style={{color:"#2a2820"}}>(optional — use instead of sets/reps above)</span></div>
+                <button onClick={()=>setFormSets(s=>[...s,{reps:form.reps||"",weight:form.weight||""}])}
+                  style={{fontSize:10,letterSpacing:2,padding:"4px 12px",borderRadius:4,cursor:"pointer",border:"1px dashed #2a2820",background:"transparent",color:"#5a5550"}}
+                  onMouseEnter={e=>{e.currentTarget.style.borderColor="#e8c84a";e.currentTarget.style.color="#e8c84a"}}
+                  onMouseLeave={e=>{e.currentTarget.style.borderColor="#2a2820";e.currentTarget.style.color="#5a5550"}}>
+                  + ADD SET
+                </button>
+              </div>
+              {formSets.length>0&&(
+                <div style={{background:"#0e0e0c",border:"1px solid #1a1815",borderRadius:6,overflow:"hidden"}}>
+                  <div style={{display:"grid",gridTemplateColumns:"28px 1fr 1fr 32px",padding:"7px 12px",fontSize:9,letterSpacing:2,color:"#3a3530",borderBottom:"1px solid #1a1815"}}>
+                    <span>#</span><span>REPS</span><span>KG</span><span/>
+                  </div>
+                  {formSets.map((s,i)=>(
+                    <div key={i} style={{display:"grid",gridTemplateColumns:"28px 1fr 1fr 32px",padding:"6px 12px",gap:8,alignItems:"center",borderBottom:i<formSets.length-1?"1px solid #141210":"none"}}>
+                      <span style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:16,color:"#3a3530",textAlign:"center"}}>{i+1}</span>
+                      <input value={s.reps} onChange={e=>{const ns=[...formSets];ns[i]={...ns[i],reps:e.target.value};setFormSets(ns)}}
+                        placeholder="reps" style={{background:"transparent",border:"1px solid #2a2820",borderRadius:4,color:"#e8e0d5",fontSize:14,padding:"5px 8px",width:"100%"}}/>
+                      <input value={s.weight} onChange={e=>{
+                          const ns=[...formSets];ns[i]={...ns[i],weight:e.target.value};
+                          // propagate weight down to empty rows below
+                          for(let j=i+1;j<ns.length;j++){if(!ns[j].weight)ns[j]={...ns[j],weight:e.target.value}}
+                          setFormSets(ns);
+                        }}
+                        placeholder="kg" style={{background:"transparent",border:"1px solid #2a2820",borderRadius:4,color:"#e8e0d5",fontSize:14,padding:"5px 8px",width:"100%"}}/>
+                      <span onClick={()=>setFormSets(s=>s.filter((_,j)=>j!==i))}
+                        style={{cursor:"pointer",color:"#3a2a2a",fontSize:18,textAlign:"center",lineHeight:1}}
+                        onMouseEnter={e=>e.currentTarget.style.color="#9a4a4a"}
+                        onMouseLeave={e=>e.currentTarget.style.color="#3a2a2a"}>×</span>
+                    </div>
+                  ))}
+                  <div style={{padding:"8px 12px",fontSize:10,color:"#3a3530",borderTop:"1px solid #1a1815"}}>
+                    {formSets.length} set{formSets.length!==1?"s":""} · will save as individual entries
+                  </div>
+                </div>
+              )}
+            </div>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
               <div onClick={()=>setForm(f=>({...f,pr:!f.pr}))}
                 style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer",fontSize:11,letterSpacing:1,color:form.pr?"#e8c84a":"#5a5550",userSelect:"none"}}>
@@ -987,7 +1229,16 @@ function App(){
           <div style={{marginTop:28,marginBottom:22,fontFamily:"'Bebas Neue',sans-serif",fontSize:30,letterSpacing:2,color:"#fff"}}>WORKOUT HISTORY</div>
           {byDate.length===0
             ?<div style={{textAlign:"center",color:"#2a2820",fontSize:12,letterSpacing:3,padding:"48px 0"}}>NO HISTORY YET</div>
-            :byDate.map(({date,list})=>{
+            :(()=>{
+              // Group dates by ISO week for the Export Week button
+              const weekGroups={};
+              byDate.forEach(({date})=>{
+                const ms=monStart(date);
+                if(!weekGroups[ms])weekGroups[ms]=date; // first date in that week (most recent, since byDate is desc)
+              });
+              return byDate.map(({date,list})=>{
+              const ms=monStart(date);
+              const isFirstOfWeek=weekGroups[ms]===date;
               const isExp=expandedDate===date;
               const working=list.filter(e=>!e.warmup);
               const vol=working.reduce((a,e)=>a+(parseInt(e.sets)||0)*(parseInt(e.reps)||0)*(parseFloat(e.weight)||0),0);
@@ -1001,7 +1252,7 @@ function App(){
                         {fmtDow(date)}, {fmtDate(date)}
                         {date===today&&<span style={{marginLeft:10,fontSize:9,color:"#e8c84a",letterSpacing:2}}>TODAY</span>}
                       </div>
-                      <div style={{fontSize:10,color:"#3a3530",marginTop:2}}>{isoWeekShort(date)} · {list.length} exercise{list.length!==1?"s":""}</div>
+                      <div style={{fontSize:10,color:"#3a3530",marginTop:2}}>{isoWeek(date)} · {list.length} exercise{list.length!==1?"s":""}</div>
                     </div>
                     {cardio[date]&&<span title="Cardio done" style={{fontSize:14}}>🏃</span>}
                     {hasPR&&<span style={{fontSize:14}}>🏆</span>}
@@ -1009,6 +1260,17 @@ function App(){
                     <span style={{fontSize:11,color:"#4a4540"}}>{working.reduce((a,e)=>a+(parseInt(e.sets)||0),0)} sets</span>
                     <span style={{fontSize:14,color:"#3a3530"}}>{isExp?"▴":"▾"}</span>
                   </div>
+                  {isFirstOfWeek&&(
+                    <div style={{padding:"8px 20px",borderTop:"1px solid #141210",background:"#0e0e0b",display:"flex",alignItems:"center",gap:10}}>
+                      <span style={{fontSize:9,color:"#3a3530",letterSpacing:2}}>{isoWeek(date)}</span>
+                      <button onClick={e=>{e.stopPropagation();generateObsidian(ms)}}
+                        style={{fontSize:9,letterSpacing:2,padding:"4px 12px",borderRadius:3,cursor:"pointer",border:"1px solid #2a4a2a",background:"transparent",color:"#4a7a4a"}}
+                        onMouseEnter={e=>{e.currentTarget.style.borderColor="#4a9a4a";e.currentTarget.style.color="#70c870"}}
+                        onMouseLeave={e=>{e.currentTarget.style.borderColor="#2a4a2a";e.currentTarget.style.color="#4a7a4a"}}>
+                        ↓ OBSIDIAN WEEK
+                      </button>
+                    </div>
+                  )}
                   {isExp&&(
                     <div style={{background:"#0e0e0c",border:"1px solid #1a1815",borderTop:"none",borderRadius:"0 0 8px 8px",padding:"16px 18px"}}>
                       {[...new Set(list.map(e=>e.exercise))].map(exName=>{
@@ -1033,7 +1295,8 @@ function App(){
                   )}
                 </div>
               );
-            })
+              });
+            })()
           }
         </>}
 
@@ -1069,56 +1332,82 @@ function App(){
                   </div>
                 </div>
               )}
-              {loggedExes.length>0&&(
-                <div>
-                  <div style={{fontSize:10,letterSpacing:3,color:"#3a3530",marginBottom:14}}>EXERCISE PROGRESSION</div>
-                  <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:12}}>
-                    {loggedExes.map(ex=>{
-                      const hist=exHistory(ex);
-                      if(!hist.length)return null;
-                      const latest=hist[hist.length-1],maxW=Math.max(...hist.map(h=>h.weight)),hasPR=hist.some(h=>h.pr);
-                      const thisW=exWeekMax(ex,thisMonStart),lastW=lastMonStart?exWeekMax(ex,lastMonStart):null;
-                      const overload=thisW!==null&&lastW!==null?+(thisW-lastW).toFixed(1):null;
-                      const overloadPct=thisW&&lastW&&lastW>0?Math.round(((thisW-lastW)/lastW)*100):null;
-                      return(
-                        <div key={ex} className="stat-card">
-                          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
-                            <div style={{fontSize:12,color:"#fff"}}>{ex}</div>
-                            {hasPR&&<span style={{fontSize:9,background:"#e8c84a18",color:"#e8c84a",border:"1px solid #e8c84a33",borderRadius:3,padding:"2px 7px",letterSpacing:1}}>PR</span>}
+              {/* ── Strength Goal Trackers ── */}
+              <div style={{marginTop:8}}>
+                <div style={{fontSize:10,letterSpacing:3,color:"#3a3530",marginBottom:16}}>STRENGTH GOALS</div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(1,1fr)",gap:14}}>
+                  {Object.entries(STRENGTH_GOALS).map(([exName,cfg])=>{
+                    // All-time personal best for this exercise (working sets only)
+                    const allW=entries.filter(e=>e.exercise===exName&&!e.warmup).map(e=>parseFloat(e.weight)||0).filter(w=>w>0);
+                    const pb=allW.length?Math.max(...allW):0;
+                    const pct=pb>0?Math.min(Math.round((pb/cfg.goal)*100),100):0;
+                    const kgLeft=Math.max(+(cfg.goal-pb).toFixed(1),0);
+
+                    // Monthly peak for the last 6 months
+                    const monthPeaks=(()=>{
+                      const now=new Date(todaySyd()+"T00:00:00");
+                      const result=[];
+                      for(let m=5;m>=0;m--){
+                        const d=new Date(now.getFullYear(),now.getMonth()-m,1);
+                        const ym=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+                        const monEntries=entries.filter(e=>e.exercise===exName&&!e.warmup&&e.date.slice(0,7)===ym);
+                        const peak=monEntries.length?Math.max(...monEntries.map(e=>parseFloat(e.weight)||0)):null;
+                        result.push({ym,peak,label:d.toLocaleDateString("en-AU",{month:"short"})});
+                      }
+                      return result;
+                    })();
+                    const maxMonPeak=Math.max(...monthPeaks.map(m=>m.peak||0),1);
+                    const hasTrend=monthPeaks.some(m=>m.peak);
+
+                    return(
+                      <div key={exName} style={{background:"#111",border:"1px solid #1a1815",borderRadius:8,padding:"20px 22px"}}>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16,flexWrap:"wrap",gap:8}}>
+                          <div>
+                            <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,color:"#fff",letterSpacing:1,lineHeight:1}}>{cfg.label}</div>
+                            <div style={{fontSize:10,color:"#4a4540",marginTop:3}}>{exName}</div>
                           </div>
-                          <div style={{display:"flex",gap:18,marginBottom:14,flexWrap:"wrap"}}>
-                            <div>
-                              <div style={{fontSize:8,color:"#3a3530",letterSpacing:3,marginBottom:3}}>CURRENT</div>
-                              <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:26,color:"#e8c84a",letterSpacing:1,lineHeight:1}}>{latest.weight||"—"}<span style={{fontSize:12,color:"#5a5550"}}> kg</span></div>
-                              <div style={{fontSize:9,color:"#3a3530",marginTop:2}}>{fmtDateShort(latest.date)}</div>
-                            </div>
-                            <div>
-                              <div style={{fontSize:8,color:"#3a3530",letterSpacing:3,marginBottom:3}}>BEST</div>
-                              <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:26,color:"#7a7570",letterSpacing:1,lineHeight:1}}>{maxW||"—"}<span style={{fontSize:12,color:"#5a5550"}}> kg</span></div>
-                            </div>
-                            {overload!==null&&(
-                              <div>
-                                <div style={{fontSize:8,color:"#3a3530",letterSpacing:3,marginBottom:3}}>WK OVERLOAD</div>
-                                <div style={{display:"flex",alignItems:"baseline",gap:4}}>
-                                  <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:26,letterSpacing:1,lineHeight:1,color:overload>0?"#4a9a4a":overload<0?"#9a4a4a":"#5a5550"}}>{overload>0?"+":""}{overload}<span style={{fontSize:12,color:"#5a5550"}}> kg</span></div>
-                                  {overloadPct!==null&&<span style={{fontSize:10,color:overload>0?"#4a9a4a":overload<0?"#9a4a4a":"#5a5550"}}>({overload>0?"+":""}{overloadPct}%)</span>}
-                                </div>
-                                <div style={{fontSize:9,color:"#3a3530",marginTop:2}}>vs last week · {lastW} kg</div>
-                              </div>
-                            )}
+                          <div style={{textAlign:"right"}}>
+                            {pb>0
+                              ?<><div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:32,color:cfg.color,letterSpacing:1,lineHeight:1}}>{pb}<span style={{fontSize:14,color:"#5a5550"}}> kg</span></div>
+                                <div style={{fontSize:10,color:"#4a4540",marginTop:2}}>personal best</div></>
+                              :<div style={{fontSize:12,color:"#3a3530"}}>no data yet</div>
+                            }
                           </div>
-                          {hist.length>1&&(
-                            <div style={{display:"flex",gap:3,alignItems:"flex-end",height:32,marginBottom:8}}>
-                              {hist.slice(-10).map((h,i)=>{const p=maxW>0?(h.weight/maxW)*100:0;return<div key={i} title={`${fmtDateShort(h.date)} · ${h.weight} kg`} style={{flex:1,background:h.pr?"#e8c84a":"#252220",height:`${Math.max(p,10)}%`,borderRadius:"2px 2px 0 0",minWidth:6}}/>;})}
-                            </div>
-                          )}
-                          <div style={{fontSize:10,color:"#3a3530",letterSpacing:1}}>{hist.length} session{hist.length!==1?"s":""} · latest {latest.sets}×{latest.reps}</div>
                         </div>
-                      );
-                    })}
-                  </div>
+
+                        {/* Progress bar */}
+                        <div style={{marginBottom:12}}>
+                          <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:"#4a4540",marginBottom:6}}>
+                            <span>0 kg</span>
+                            <span style={{color:cfg.color,fontWeight:700}}>{pct}% of goal</span>
+                            <span>Goal: {cfg.goal} kg</span>
+                          </div>
+                          <div style={{height:8,background:"#1a1815",borderRadius:4,overflow:"hidden",position:"relative"}}>
+                            <div style={{height:"100%",width:`${pct}%`,background:`linear-gradient(90deg,${cfg.color}88,${cfg.color})`,borderRadius:4,transition:"width .4s ease"}}/>
+                          </div>
+                          <div style={{fontSize:10,color:"#3a3530",marginTop:5,textAlign:"right"}}>{kgLeft>0?`${kgLeft} kg to go`:"🏆 Goal reached!"}</div>
+                        </div>
+
+                        {/* 6-month trend sparkline */}
+                        {hasTrend&&(
+                          <div>
+                            <div style={{fontSize:9,letterSpacing:2,color:"#2a2820",marginBottom:6}}>6-MONTH TREND</div>
+                            <div style={{display:"flex",gap:4,alignItems:"flex-end",height:36}}>
+                              {monthPeaks.map((m,i)=>(
+                                <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
+                                  <div title={m.peak?`${m.ym}: ${m.peak}kg`:"no data"}
+                                    style={{width:"100%",height:m.peak?`${Math.round((m.peak/maxMonPeak)*100)}%`:"4px",minHeight:4,background:m.peak?cfg.color:"#2a2820",borderRadius:"2px 2px 0 0",opacity:m.peak?1:0.3,transition:"height .3s"}}/>
+                                  <div style={{fontSize:8,color:"#3a3530",whiteSpace:"nowrap"}}>{m.label}</div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
-              )}
+              </div>
             </>
           }
         </>}
@@ -1132,16 +1421,16 @@ function App(){
               <div style={{fontSize:28,lineHeight:1}}>🚨</div>
               <div>
                 <div style={{fontSize:15,color:"#ff6060",letterSpacing:1,fontFamily:"'Bebas Neue',sans-serif",marginBottom:4}}>ALL THREE LIFTS HAVE STALLED</div>
-                <div style={{fontSize:12,color:"#c07070",lineHeight:1.6}}>Consider completing this phase and transitioning to the next.</div>
-                {eligible&&<button onClick={()=>setCompleteModal(true)}
+                <div style={{fontSize:12,color:"#c07070",lineHeight:1.6}}>All three lifts have stalled. Consider completing this phase and moving on.</div>
+                {canComplete&&<button onClick={()=>setCompleteModal(true)}
                   style={{marginTop:12,background:"#8b2222",border:"none",color:"#fff",padding:"8px 18px",borderRadius:4,fontSize:11,letterSpacing:2,cursor:"pointer",fontWeight:700}}>
-                  COMPLETE PHASE {phaseState.currentPhase} →
+                  COMPLETE PHASE {curPhaseObj.id} →
                 </button>}
               </div>
             </div>
           )}
 
-          {/* Phase card */}
+          {/* Phase selector */}
           <div style={{background:"#111",border:"1px solid #1a1815",borderRadius:8,padding:20,marginBottom:24}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:18,flexWrap:"wrap",gap:12}}>
               <div>
@@ -1151,8 +1440,9 @@ function App(){
               </div>
               <div style={{textAlign:"right"}}>
                 <div style={{fontSize:9,letterSpacing:3,color:"#3a3530",marginBottom:4}}>WEEKS IN PHASE</div>
-                <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:36,color:"#e8c84a",letterSpacing:2,lineHeight:1}}>{weeksInPhase}</div>
+                <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:36,color:canComplete?"#e8c84a":"#c87820",letterSpacing:2,lineHeight:1}}>{weeksInPhase}</div>
                 {phaseState.phaseStartDate&&<div style={{fontSize:10,color:"#3a3530",marginTop:3}}>since {fmtDateShort(phaseState.phaseStartDate)}</div>}
+                {!canComplete&&<div style={{fontSize:10,color:"#7a5030",marginTop:3}}>{5-weeksInPhase} week{5-weeksInPhase!==1?"s":""} until eligible</div>}
               </div>
             </div>
 
@@ -1161,57 +1451,60 @@ function App(){
               {PHASES.map(ph=>{
                 const active=ph.id===phaseState.currentPhase;
                 const isForward=ph.id>phaseState.currentPhase;
-                const locked=isForward&&!eligible;
+                const isLocked=isForward&&!canComplete;
+                const isNext=ph.id===nextPhaseId&&!active;
                 return(
                   <div key={ph.id}
-                    className={`phase-pill${(!active&&!locked)?" phase-pill-clickable":""}`}
-                    onClick={()=>{if(!active&&!locked)switchPhase(ph.id)}}
-                    style={{border:`1px solid ${active?"#e8c84a":locked?"#1e1c18":"#2a2820"}`,borderRadius:6,padding:"14px 16px",cursor:active||locked?"default":"pointer",background:active?"#1a1710":locked?"#0d0d0b":"transparent",opacity:locked?0.5:1}}>
+                    className={active?"phase-pill-active":isLocked?"phase-pill-locked":"phase-pill-clickable"}
+                    onClick={()=>{if(active||isLocked)return;if(isForward&&isNext)setCompleteModal(true);else switchPhaseManual(ph.id)}}
+                    style={{border:`1px solid ${active?"#e8c84a":isLocked?"#2a2820":isNext?"#3a7a3a":"#2a2820"}`,borderRadius:6,padding:"14px 16px",background:active?"#1a1710":isLocked?"#0e0e0d":"transparent"}}>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-                      <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:14,color:active?"#e8c84a":locked?"#3a3530":"#6a6560",letterSpacing:1}}>PHASE {ph.id}</div>
+                      <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:14,color:active?"#e8c84a":isLocked?"#2a2820":"#6a6560",letterSpacing:1}}>PHASE {ph.id}</div>
                       {active&&<span style={{fontSize:9,background:"#e8c84a",color:"#0d0d0d",borderRadius:3,padding:"2px 6px",letterSpacing:1,fontWeight:700}}>ACTIVE</span>}
-                      {locked&&<span style={{fontSize:9,color:"#3a3530",letterSpacing:1}}>🔒 {weeksLeft}w</span>}
+                      {isLocked&&<span style={{fontSize:9,color:"#3a3530",letterSpacing:1}}>🔒 {5-weeksInPhase}w</span>}
+                      {isNext&&canComplete&&<span style={{fontSize:9,color:"#4a8a4a",letterSpacing:1}}>READY</span>}
                     </div>
-                    <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,color:active?"#fff":locked?"#2a2820":"#5a5550",letterSpacing:1,marginBottom:4}}>{ph.name}</div>
-                    <div style={{fontSize:10,color:locked?"#2a2820":"#4a4540",lineHeight:1.5}}>{ph.description}</div>
+                    <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,color:active?"#fff":isLocked?"#2a2820":"#5a5550",letterSpacing:1,marginBottom:4}}>{ph.name}</div>
+                    <div style={{fontSize:10,color:isLocked?"#2a2820":"#4a4540",lineHeight:1.5}}>{ph.description}</div>
                   </div>
                 );
               })}
             </div>
 
-            {/* Complete Phase button */}
-            <div style={{marginBottom:20}}>
-              {eligible
-                ?<button onClick={()=>setCompleteModal(true)}
-                    style={{background:"transparent",border:"1px solid #4a9a4a",color:"#4a9a4a",padding:"10px 22px",borderRadius:4,fontSize:11,letterSpacing:2,cursor:"pointer",fontWeight:700,transition:"all .15s"}}
-                    onMouseEnter={e=>{e.currentTarget.style.background="#0d1f0d"}}
-                    onMouseLeave={e=>{e.currentTarget.style.background="transparent"}}>
-                    ✓ COMPLETE PHASE {phaseState.currentPhase} →
-                  </button>
-                :<div style={{fontSize:11,color:"#3a3530",display:"flex",alignItems:"center",gap:8}}>
-                    <span>🔒</span>
-                    <span>{weeksLeft} more week{weeksLeft!==1?"s":""} until phase can be completed ({weeksInPhase}/{MIN_PHASE_WEEKS} weeks done)</span>
-                  </div>
-              }
-            </div>
+            {/* Complete phase CTA */}
+            {canComplete&&(
+              <div style={{marginBottom:20,padding:"14px 18px",background:"#0d1a0d",border:"1px solid #2a5a2a",borderRadius:6,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
+                <div>
+                  <div style={{fontSize:12,color:"#70e870",letterSpacing:1}}>Phase {curPhaseObj.id} eligible for completion</div>
+                  <div style={{fontSize:10,color:"#4a6a4a",marginTop:3}}>Peak weights will be captured · opening weights auto-set at {Math.round(resetPct*100)}%</div>
+                </div>
+                <button onClick={()=>setCompleteModal(true)}
+                  style={{background:"#4a9a4a",border:"none",color:"#fff",padding:"10px 20px",borderRadius:4,fontSize:11,letterSpacing:2,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
+                  COMPLETE PHASE →
+                </button>
+              </div>
+            )}
 
             {/* Phase history */}
             {phaseState.transitions.length>0&&(
               <div>
                 <div style={{fontSize:9,letterSpacing:3,color:"#2a2820",marginBottom:10}}>PHASE HISTORY</div>
-                {[...phaseState.transitions].reverse().slice(0,8).map((t,i)=>(
-                  <div key={i} style={{display:"flex",gap:12,alignItems:"center",fontSize:11,color:"#4a4540",marginBottom:6,flexWrap:"wrap"}}>
-                    <span style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:13,color:"#5a5550",letterSpacing:1,minWidth:72}}>{t.isoWeek||isoWeekShort(t.date)}</span>
-                    <span>Phase {t.from} → Phase {t.to}</span>
-                    {t.reason==="complete"&&t.peaks&&(
-                      <span style={{fontSize:9,color:"#3a5a3a",background:"#0a1a0a",border:"1px solid #1a3a1a",borderRadius:3,padding:"2px 8px",letterSpacing:1}}>
-                        S:{t.peaks.squat||"—"} B:{t.peaks.bench||"—"} D:{t.peaks.deadlift||"—"} kg · {Math.round((t.resetPct||0.8)*100)}% reset
-                      </span>
-                    )}
-                    {t.reason==="manual"&&<span style={{fontSize:9,color:"#4a4030",letterSpacing:1}}>manual</span>}
-                    {t.reason==="auto-stall"&&<span style={{fontSize:9,color:"#6a3030",letterSpacing:1}}>stalled</span>}
-                  </div>
-                ))}
+                {[...phaseState.transitions].reverse().slice(0,8).map((t,i)=>{
+                  const wkLabel=isoWeekShort(t.date);
+                  const reasonLabel=t.reason==="completed"?"completed":t.reason==="auto-stall"?"stalled":"manual";
+                  return(
+                    <div key={i} style={{display:"flex",gap:12,alignItems:"center",fontSize:11,color:"#4a4540",marginBottom:5,flexWrap:"wrap"}}>
+                      <span style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:13,color:"#3a3530",letterSpacing:1,minWidth:72}}>{wkLabel}</span>
+                      <span>Phase {t.from} → Phase {t.to}</span>
+                      <span style={{fontSize:9,color:t.reason==="completed"?"#4a8a4a":t.reason==="auto-stall"?"#8a4040":"#3a3530",border:"1px solid currentColor",borderRadius:3,padding:"1px 6px",letterSpacing:1}}>{reasonLabel}</span>
+                      {t.peaks&&Object.keys(t.peaks).length>0&&(
+                        <span style={{fontSize:9,color:"#3a3530"}}>
+                          peaks: {DEFAULT_PROG.map(l=>t.peaks[l.id]?`${l.id.slice(0,3)} ${t.peaks[l.id]}kg`:"").filter(Boolean).join(" · ")}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -1219,23 +1512,16 @@ function App(){
           {/* Lift table — now with LOAD % column */}
           <div style={{background:"#111",border:"1px solid #1a1815",borderRadius:8,marginBottom:24,overflowX:"auto"}}>
             <div style={{minWidth:660}}>
-              <div style={{display:"grid",gridTemplateColumns:"1.4fr 1fr 1fr 1fr 1fr 90px 90px",padding:"11px 20px",fontSize:9,letterSpacing:3,color:"#3a3530",borderBottom:"1px solid #1a1815",background:"#0e0e0c"}}>
-                <span>LIFT</span>
-                <span style={{textAlign:"center"}}>LAST LOGGED</span>
-                <span style={{textAlign:"center"}}>THIS WEEK</span>
-                <span style={{textAlign:"center"}}>NEXT WEEK</span>
-                <span style={{textAlign:"center"}}>INCREMENT</span>
-                <span style={{textAlign:"center"}}>LOAD %</span>
-                <span style={{textAlign:"center"}}>STATUS</span>
+              <div style={{display:"grid",gridTemplateColumns:"1.4fr 1fr 1fr 1fr 1fr 1fr",padding:"11px 20px",fontSize:9,letterSpacing:3,color:"#3a3530",borderBottom:"1px solid #1a1815",background:"#0e0e0c"}}>
+                <span>LIFT</span><span style={{textAlign:"center"}}>LAST LOGGED</span><span style={{textAlign:"center"}}>THIS WEEK</span><span style={{textAlign:"center"}}>LOAD %</span><span style={{textAlign:"center"}}>NEXT WEEK</span><span style={{textAlign:"center"}}>STATUS</span>
               </div>
               {progData.map((lift,idx)=>{
                 const stallCount=phaseState.stallCounts[lift.id]||0,stallTriple=stallCount>=3||lift.stalledWeeks>=3;
                 const lp=lift.loadPct;
-                const lpColor=lp===null?"#3a3530":lp>=100?"#4a9a4a":lp>=85?"#c87820":"#9a4a4a";
-                const lpBg=lp===null?"transparent":lp>=100?"#0d1f0d":lp>=85?"#1a1208":"#1f0d0d";
+                const lpColor=lp===null?"#3a3530":lp>=100?"#4a9a4a":lp>=85?"#e8c84a":"#e87070";
                 return(
                   <div key={lift.id} style={{borderBottom:idx<progData.length-1?"1px solid #161410":"none"}}>
-                    <div style={{display:"grid",gridTemplateColumns:"1.4fr 1fr 1fr 1fr 1fr 90px 90px",padding:"16px 20px",alignItems:"center",background:idx%2===0?"#111":"#0f0f0d"}}>
+                    <div style={{display:"grid",gridTemplateColumns:"1.4fr 1fr 1fr 1fr 1fr 1fr",padding:"16px 20px",alignItems:"center",background:idx%2===0?"#111":"#0f0f0d"}}>
                       <div>
                         <div style={{fontSize:14,color:"#fff",marginBottom:2}}>{lift.label}</div>
                         <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
@@ -1244,12 +1530,14 @@ function App(){
                         </div>
                         {!lift.hasData&&<div style={{fontSize:10,color:"#4a4540",marginTop:3}}>Log this lift to begin</div>}
                       </div>
+                      {/* Last logged */}
                       <div style={{textAlign:"center"}}>
                         {lift.lastLoggedWeight
                           ?<><div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,color:"#7a7570",letterSpacing:1,lineHeight:1}}>{lift.lastLoggedWeight}<span style={{fontSize:11,color:"#4a4540"}}> kg</span></div>
                             <div style={{fontSize:10,color:"#3a3530",marginTop:2}}>{lift.lastLoggedWeek}</div></>
                           :<span style={{color:"#2a2820"}}>—</span>}
                       </div>
+                      {/* This week prescribed */}
                       <div style={{textAlign:"center"}}>
                         {lift.prescribedWeight
                           ?<><div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:26,letterSpacing:1,lineHeight:1,color:lift.thisWeekActual?(lift.thisWeekActual>=lift.prescribedWeight?"#4a9a4a":"#e8c84a"):"#e8c84a"}}>{lift.prescribedWeight}<span style={{fontSize:12,color:"#5a5550"}}> kg</span></div>
@@ -1258,28 +1546,22 @@ function App(){
                               :<div style={{fontSize:10,color:"#3a3530",marginTop:2}}>{todayIsoWk} · pending</div>}</>
                           :<span style={{color:"#2a2820"}}>—</span>}
                       </div>
-                      <div style={{textAlign:"center"}}>
-                        {lift.nextWeight?<div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,color:"#5a6a5a",letterSpacing:1}}>{lift.nextWeight}<span style={{fontSize:11,color:"#4a4540"}}> kg</span></div>:<span style={{color:"#2a2820"}}>—</span>}
-                      </div>
-                      <div style={{textAlign:"center"}}>
-                        <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
-                          <span style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,color:"#4a9a4a",letterSpacing:1}}>+{lift.increment}</span>
-                          <span style={{fontSize:11,color:"#4a4540"}}>kg</span>
-                          <select value={lift.increment} onChange={e=>{const v=parseFloat(e.target.value);const nc=progCfg.map(l=>l.id===lift.id?{...l,increment:v}:l);setProgCfg(nc);saveProg(startWeights,nc)}}
-                            style={{background:"#1a1815",border:"1px solid #2a2820",borderRadius:3,color:"#6a6560",fontSize:10,padding:"2px 4px",cursor:"pointer",marginLeft:4}}>
-                            {[0.5,1,1.25,2,2.5,5].map(v=><option key={v} value={v}>{v}</option>)}
-                          </select>
-                        </div>
-                      </div>
                       {/* Load % */}
                       <div style={{textAlign:"center"}}>
                         {lp!==null
-                          ?<div style={{background:lpBg,border:`1px solid ${lpColor}33`,borderRadius:4,padding:"6px 4px",display:"inline-block",minWidth:52}}>
-                              <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,color:lpColor,letterSpacing:1,lineHeight:1}}>{lp}%</div>
-                              <div style={{fontSize:9,color:lpColor,opacity:.7,marginTop:2}}>{lp>=100?"on target":lp>=85?"close":"below"}</div>
+                          ?<div>
+                            <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:26,color:lpColor,letterSpacing:1,lineHeight:1}}>{lp}<span style={{fontSize:12,color:"#5a5550"}}>%</span></div>
+                            <div style={{marginTop:5,height:4,background:"#1a1815",borderRadius:2,overflow:"hidden",width:48,margin:"5px auto 0"}}>
+                              <div style={{height:"100%",width:`${Math.min(lp,100)}%`,background:lpColor,borderRadius:2,transition:"width .3s"}}/>
                             </div>
-                          :<span style={{fontSize:11,color:"#2a2820"}}>—</span>}
+                          </div>
+                          :<span style={{color:"#2a2820"}}>—</span>}
                       </div>
+                      {/* Next week */}
+                      <div style={{textAlign:"center"}}>
+                        {lift.nextWeight?<div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,color:"#5a6a5a",letterSpacing:1}}>{lift.nextWeight}<span style={{fontSize:11,color:"#4a4540"}}> kg</span></div>:<span style={{color:"#2a2820"}}>—</span>}
+                      </div>
+                      {/* Status */}
                       <div style={{textAlign:"center"}}>
                         <div style={{display:"flex",flexDirection:"column",gap:5,alignItems:"center"}}>
                           {lift.stalled||stallTriple
@@ -1288,7 +1570,7 @@ function App(){
                               ?<span style={{display:"inline-block",background:"#0d1f0d",border:"1px solid #2a7a2a",color:"#70e870",borderRadius:4,padding:"4px 8px",fontSize:10,letterSpacing:1}}>✓ ON TRACK</span>
                               :lift.hasData
                                 ?<span style={{display:"inline-block",background:"#1a1815",border:"1px solid #2a2820",color:"#5a5550",borderRadius:4,padding:"4px 8px",fontSize:10,letterSpacing:1}}>PENDING</span>
-                                :<span style={{display:"inline-block",background:"#1a1815",border:"1px solid #2a2820",color:"#3a3530",borderRadius:4,padding:"4px 8px",fontSize:10,letterSpacing:1}}>NO DATA</span>
+                                :<span style={{display:"inline-block",background:"1a1815",border:"1px solid #2a2820",color:"#3a3530",borderRadius:4,padding:"4px 8px",fontSize:10,letterSpacing:1}}>NO DATA</span>
                           }
                           <button className="stall-btn" onClick={()=>bumpStall(lift.id)}>+ stall</button>
                         </div>
@@ -1306,17 +1588,46 @@ function App(){
             </div>
           </div>
 
-          {/* Set starting weight */}
+          {/* Phase peaks history */}
+          {phaseState.peakWeights&&Object.keys(phaseState.peakWeights).length>0&&(
+            <div style={{background:"#111",border:"1px solid #1a1815",borderRadius:8,padding:20,marginBottom:24}}>
+              <div style={{fontSize:10,letterSpacing:3,color:"#3a3530",marginBottom:4}}>PHASE PEAK WEIGHTS</div>
+              <div style={{fontSize:11,color:"#4a4540",marginBottom:16}}>Highest working set logged per phase at completion.</div>
+              <div style={{overflowX:"auto"}}>
+                <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,minWidth:320}}>
+                  <thead>
+                    <tr style={{borderBottom:"1px solid #1a1815"}}>
+                      <th style={{textAlign:"left",padding:"6px 12px 10px 0",fontSize:9,letterSpacing:3,color:"#3a3530",fontWeight:"normal"}}>PHASE</th>
+                      {DEFAULT_PROG.map(l=><th key={l.id} style={{textAlign:"center",padding:"6px 12px 10px",fontSize:9,letterSpacing:3,color:"#3a3530",fontWeight:"normal"}}>{l.label.toUpperCase()}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Object.entries(phaseState.peakWeights).sort(([a],[b])=>a-b).map(([phId,peaks])=>{
+                      const ph=PHASES.find(p=>p.id===parseInt(phId));
+                      return(
+                        <tr key={phId} style={{borderBottom:"1px solid #161410"}}>
+                          <td style={{padding:"10px 12px 10px 0",color:"#8a8075"}}>Phase {phId}: {ph?.name||""}</td>
+                          {DEFAULT_PROG.map(l=><td key={l.id} style={{textAlign:"center",padding:"10px 12px",fontFamily:"'Bebas Neue',sans-serif",fontSize:18,color:peaks[l.id]?"#e8c84a":"#2a2820",letterSpacing:.5}}>{peaks[l.id]?`${peaks[l.id]} kg`:"—"}</td>)}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Set starting weight (manual override) */}
           <div style={{background:"#111",border:"1px solid #1a1815",borderRadius:8,padding:20}}>
-            <div style={{fontSize:10,letterSpacing:3,color:"#3a3530",marginBottom:4}}>SET STARTING WEIGHT</div>
-            <div style={{fontSize:11,color:"#4a4540",marginBottom:18}}>Override the auto-calculated opening weight for any lift.</div>
+            <div style={{fontSize:10,letterSpacing:3,color:"#3a3530",marginBottom:4}}>MANUAL STARTING WEIGHT OVERRIDE</div>
+            <div style={{fontSize:11,color:"#4a4540",marginBottom:18}}>Overrides the auto-calculated opening weight. Use if the phase reset calculation needs correction.</div>
             <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12}}>
               {progData.map(lift=>(
                 <div key={lift.id}>
                   <div style={{fontSize:10,color:"#5a5550",letterSpacing:1,marginBottom:8}}>{lift.label}</div>
                   <div style={{display:"flex",gap:8,alignItems:"center"}}>
                     <input type="number" placeholder={lift.startWeight?String(lift.startWeight):"kg"} step="0.5"
-                      onBlur={e=>{const v=parseFloat(e.target.value);if(!v)return;const nsw={...startWeights,[lift.id]:{weight:v,weekStart:isoWeek(todaySydney())}};setStartWeights(nsw);saveProg(nsw,progCfg);flash2(`Start weight set: ${lift.label}`);e.target.value=""}}
+                      onBlur={e=>{const v=parseFloat(e.target.value);if(!v)return;const nsw={...startWeights,[lift.id]:{weight:v,weekStart:isoWeek(todaySyd())}};setStartWeights(nsw);saveProg(nsw,progCfg);flash2(`Override set: ${lift.label}`);e.target.value=""}}
                       style={{width:"100%",background:"transparent",border:"1px solid #2a2820",borderRadius:4,color:"#e8e0d5",fontSize:14,padding:"8px 10px"}}/>
                     <span style={{fontSize:12,color:"#4a4540"}}>kg</span>
                   </div>
@@ -1374,58 +1685,45 @@ function App(){
         />
       )}
 
-      {/* ── Complete Phase Confirm Modal ── */}
-      {completeModal&&(()=>{
-        const fromId=phaseState.currentPhase;
-        const toId=fromId>=3?1:fromId+1;
-        const resetPct=PHASE_RESET_PCT[`${fromId}-${toId}`]||0.80;
-        const peaks=capturePeakWeights(fromId);
-        return<>
-          <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.88)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:"16px"}} onClick={()=>setCompleteModal(false)}>
-          <div className="fade-in" onClick={e=>e.stopPropagation()} style={{background:"#161410",border:"1px solid #2a5a2a",borderRadius:8,width:"min(480px,100%)",boxShadow:"0 24px 64px rgba(0,0,0,.95)"}}>
-            <div style={{padding:"22px 24px 18px",borderBottom:"1px solid #1a1815"}}>
-              <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:24,letterSpacing:2,color:"#e8c84a",lineHeight:1,marginBottom:4}}>COMPLETE PHASE {fromId}</div>
-              <div style={{fontSize:11,color:"#5a5550"}}>Peaks captured · Opening weights calculated at {Math.round(resetPct*100)}%</div>
+      {/* ── Complete Phase Modal ── */}
+      {completeModal&&(
+        <CompletePhaseModal
+          curPhase={curPhaseObj}
+          nextPhase={nextPhaseObj}
+          peakWeights={peakWeightsNow}
+          resetPct={resetPct}
+          weeksInPhase={weeksInPhase}
+          onConfirm={confirmCompletePhase}
+          onClose={()=>setCompleteModal(false)}
+        />
+      )}
+
+      {/* ── Obsidian Export Modal ── */}
+      {obsModal&&<>
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.75)",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:"16px"}} onClick={()=>setObsModal(false)}>
+        <div onClick={e=>e.stopPropagation()} style={{background:"#161410",border:"1px solid #2a4a2a",borderRadius:8,padding:28,width:"min(680px,100%)",maxHeight:"85vh",display:"flex",flexDirection:"column",boxShadow:"0 24px 64px rgba(0,0,0,.9)"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+            <div>
+              <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,letterSpacing:2,color:"#4a9a4a"}}>OBSIDIAN EXPORT</div>
+              <div style={{fontSize:10,color:"#3a5a3a",letterSpacing:2,marginTop:3}}>{obsWeek} · MARKDOWN FORMAT</div>
             </div>
-            <div style={{padding:"18px 24px"}}>
-              {DEFAULT_PROG.map(lift=>{
-                const peak=peaks[lift.id];
-                const reset=peak?Math.round(peak*resetPct*2)/2:null;
-                return(
-                  <div key={lift.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:"1px solid #161410"}}>
-                    <span style={{fontSize:12,color:"#8a8075"}}>{lift.label}</span>
-                    <div style={{textAlign:"right"}}>
-                      {peak
-                        ?<>
-                          <span style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:16,color:"#7a7570",letterSpacing:1}}>peak {peak} kg</span>
-                          <span style={{fontSize:11,color:"#3a3530",margin:"0 8px"}}>→</span>
-                          <span style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,color:"#e8c84a",letterSpacing:1}}>{reset} kg</span>
-                          <span style={{fontSize:10,color:"#4a4540"}}> opening</span>
-                        </>
-                        :<span style={{fontSize:11,color:"#3a3530"}}>no data — set manually</span>
-                      }
-                    </div>
-                  </div>
-                );
-              })}
-              <div style={{marginTop:18,fontSize:11,color:"#4a4540",lineHeight:1.6}}>
-                Phase {toId} ({PHASES[toId-1].name}) will start today. Prescribed weights reset from opening weight.
-              </div>
-            </div>
-            <div style={{padding:"16px 24px",borderTop:"1px solid #1a1815",display:"flex",gap:10}}>
-              <button onClick={()=>setCompleteModal(false)}
-                style={{background:"transparent",border:"1px solid #2a2820",color:"#5a5550",padding:"10px 20px",borderRadius:4,fontSize:11,cursor:"pointer",letterSpacing:1}}>
-                CANCEL
-              </button>
-              <button onClick={completePhase}
-                style={{flex:1,background:"#4a9a4a",border:"none",color:"#fff",padding:"11px",borderRadius:4,fontSize:11,letterSpacing:2,fontWeight:700,cursor:"pointer"}}>
-                CONFIRM — START PHASE {toId}
-              </button>
-            </div>
+            <span onClick={()=>setObsModal(false)} style={{fontSize:22,color:"#5a5550",cursor:"pointer"}}>×</span>
           </div>
+          <div style={{fontSize:11,color:"#6a6560",marginBottom:12,lineHeight:1.7}}>
+            Copy and paste into a new <strong style={{color:"#9a9590"}}>.md</strong> note in Obsidian. The <strong style={{color:"#9a9590"}}>Observations</strong> and <strong style={{color:"#9a9590"}}>Notes</strong> fields are left blank for you to fill in.
           </div>
-        </>;
-      })()}
+          <textarea readOnly value={obsContent} onFocus={e=>e.target.select()} onClick={e=>e.target.select()}
+            style={{flex:1,minHeight:260,background:"#0d0d0d",border:"1px solid #2a2820",borderRadius:4,color:"#a8a09a",fontSize:11,padding:"12px 14px",fontFamily:"monospace",resize:"none",lineHeight:1.5}}/>
+          <div style={{display:"flex",gap:10,marginTop:16}}>
+            <button onClick={()=>navigator.clipboard.writeText(obsContent).then(()=>{flash2("Copied!");setObsModal(false)}).catch(()=>flash2("Copy the text above manually.","error"))}
+              style={{flex:1,background:"#4a9a4a",border:"none",color:"#fff",padding:"11px",borderRadius:4,fontSize:11,letterSpacing:2,fontWeight:700,cursor:"pointer"}}>
+              COPY TO CLIPBOARD
+            </button>
+            <button onClick={()=>setObsModal(false)} style={{background:"transparent",border:"1px solid #2a2820",color:"#5a5550",padding:"11px 20px",borderRadius:4,fontSize:11,cursor:"pointer"}}>CLOSE</button>
+          </div>
+        </div>
+        </div>
+      </>}
 
       {/* ── CSV Modal ── */}
       {csvModal&&<>
